@@ -191,6 +191,7 @@ function handleParticipantLeft(event) {
 
 // Setup audio capture from the Jitsi Meet conference
 function setupAudioCapture() {
+    console.log('Setting up audio capture...');
     if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -198,18 +199,25 @@ function setupAudioCapture() {
     // Get the local audio stream from Jitsi Meet
     navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         .then(stream => {
-            // Create a media recorder to capture audio
-            mediaRecorder = new MediaRecorder(stream);
+            console.log('Got audio stream, setting up recorder...');
+            mediaStream = stream;
+            
+            // Create a media recorder to capture audio with higher quality
+            const options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 };
+            mediaRecorder = new MediaRecorder(stream, options);
             
             mediaRecorder.ondataavailable = event => {
+                console.log('Audio data available, size:', event.data.size);
                 if (event.data.size > 0) {
                     audioChunks.push(event.data);
                 }
             };
             
             mediaRecorder.onstop = () => {
+                console.log('Media recorder stopped, chunks:', audioChunks.length);
                 if (audioChunks.length > 0 && aiEnabled) {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    console.log('Sending audio blob to server, size:', audioBlob.size);
                     sendAudioToServer(audioBlob);
                     audioChunks = [];
                 }
@@ -220,7 +228,12 @@ function setupAudioCapture() {
                 }
             };
             
+            // Set up audio visualizer
+            setupAudioVisualizer(stream);
+            
+            // Start recording
             startRecording();
+            console.log('Started recording');
         })
         .catch(error => {
             console.error('Error accessing microphone:', error);
@@ -228,19 +241,82 @@ function setupAudioCapture() {
         });
 }
 
+// Setup audio visualizer
+function setupAudioVisualizer(stream) {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    // Create an analyzer node
+    audioAnalyser = audioContext.createAnalyser();
+    audioAnalyser.fftSize = 256;
+    
+    // Create a source from the stream
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(audioAnalyser);
+    
+    // Start drawing the visualizer
+    drawAudioVisualizer();
+}
+
+// Draw audio visualizer
+function drawAudioVisualizer() {
+    if (!audioAnalyser) return;
+    
+    // Get the canvas element by ID
+    const canvas = document.getElementById('audio-visualizer');
+    if (!canvas) {
+        console.error('Audio visualizer canvas not found');
+        return;
+    }
+    
+    const canvasCtx = canvas.getContext('2d');
+    const bufferLength = audioAnalyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    function draw() {
+        if (!audioAnalyser) return;
+        
+        animationFrame = requestAnimationFrame(draw);
+        
+        audioAnalyser.getByteFrequencyData(dataArray);
+        
+        canvasCtx.fillStyle = '#f5f5f5';
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let barHeight;
+        let x = 0;
+        
+        for (let i = 0; i < bufferLength; i++) {
+            barHeight = dataArray[i] / 2;
+            
+            canvasCtx.fillStyle = `rgb(${barHeight + 100}, 50, 50)`;
+            canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+            
+            x += barWidth + 1;
+        }
+    }
+    
+    draw();
+}
+
 // Start recording audio
 function startRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'recording') {
+        console.log('Starting recording...');
         mediaRecorder.start();
         isRecording = true;
         
-        // Stop recording after 5 seconds to process the audio
+        // Stop recording after 3 seconds to process the audio
+        // This is a good balance for real-time conversation
         setTimeout(() => {
             if (mediaRecorder && mediaRecorder.state === 'recording') {
+                console.log('Stopping recording after timeout...');
                 mediaRecorder.stop();
                 isRecording = false;
             }
-        }, 5000);
+        }, 3000);
     }
 }
 
