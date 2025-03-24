@@ -9,6 +9,11 @@ let mediaStream = null;
 let audioAnalyser = null;
 let animationFrame = null;
 let jitsiApi = null;
+let isStreamingAudio = false;
+let streamingInterval = null;
+let currentAudioResponse = null;
+let audioQueue = [];
+let isPlayingAudio = false;
 
 // DOM elements
 const endMeetingBtn = document.getElementById('end-meeting');
@@ -23,14 +28,22 @@ function initializeSocket() {
     
     socket.on('connect', () => {
         console.log('Connected to server');
+        updateAiStatus(true);
     });
     
     socket.on('disconnect', () => {
         console.log('Disconnected from server');
         updateAiStatus(false);
+        stopAudioStreaming();
     });
     
+    // Legacy handler
     socket.on('ai_response', handleAiResponse);
+    
+    // New streaming handlers
+    socket.on('partial_transcript', handlePartialTranscript);
+    socket.on('streaming_response', handleStreamingResponse);
+    socket.on('streaming_audio', handleStreamingAudio);
 }
 
 // Initialize Jitsi Meet API
@@ -171,6 +184,10 @@ function handleAudioMuteStatusChanged(event) {
             mediaRecorder.stop();
             isRecording = false;
         }
+        
+        if (isStreamingAudio) {
+            stopAudioStreaming();
+        }
     } else if (aiEnabled) {
         // Resume recording if the user unmutes their microphone and AI is enabled
         setupAudioCapture();
@@ -202,38 +219,51 @@ function setupAudioCapture() {
             console.log('Got audio stream, setting up recorder...');
             mediaStream = stream;
             
-            // Create a media recorder to capture audio with higher quality
+            // Create a media recorder to capture audio with higher quality and smaller chunks
+            // for real-time streaming
             const options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 };
             mediaRecorder = new MediaRecorder(stream, options);
             
             mediaRecorder.ondataavailable = event => {
-                console.log('Audio data available, size:', event.data.size);
                 if (event.data.size > 0) {
-                    audioChunks.push(event.data);
+                    if (isStreamingAudio) {
+                        // In streaming mode, immediately send each chunk
+                        sendAudioChunkToServer(event.data);
+                    } else {
+                        // In batch mode, collect chunks
+                        audioChunks.push(event.data);
+                    }
                 }
             };
             
             mediaRecorder.onstop = () => {
-                console.log('Media recorder stopped, chunks:', audioChunks.length);
-                if (audioChunks.length > 0 && aiEnabled) {
+                if (!isStreamingAudio && audioChunks.length > 0 && aiEnabled) {
+                    // In batch mode, send the complete audio blob
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     console.log('Sending audio blob to server, size:', audioBlob.size);
                     sendAudioToServer(audioBlob);
                     audioChunks = [];
+                } else if (isStreamingAudio) {
+                    // In streaming mode, signal the end of the stream
+                    socket.emit('end_audio_stream');
                 }
                 
                 // Restart recording if AI is still enabled
                 if (aiEnabled && !isRecording) {
-                    startRecording();
+                    if (isStreamingAudio) {
+                        startAudioStreaming();
+                    } else {
+                        startRecording();
+                    }
                 }
             };
             
             // Set up audio visualizer
             setupAudioVisualizer(stream);
             
-            // Start recording
-            startRecording();
-            console.log('Started recording');
+            // Start streaming audio instead of batch recording
+            startAudioStreaming();
+            console.log('Started audio streaming');
         })
         .catch(error => {
             console.error('Error accessing microphone:', error);
@@ -301,10 +331,11 @@ function drawAudioVisualizer() {
     draw();
 }
 
-// Start recording audio
+// Start recording audio (batch mode)
 function startRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'recording') {
-        console.log('Starting recording...');
+        console.log('Starting batch recording...');
+        audioChunks = [];
         mediaRecorder.start();
         isRecording = true;
         
@@ -320,7 +351,42 @@ function startRecording() {
     }
 }
 
-// Send audio to the server for processing
+// Start streaming audio to server in real-time
+function startAudioStreaming() {
+    if (mediaRecorder && mediaRecorder.state !== 'recording') {
+        console.log('Starting audio streaming...');
+        isStreamingAudio = true;
+        isRecording = true;
+        
+        // Use a shorter timeslice (100ms) to get more frequent ondataavailable events
+        // This allows for more real-time streaming
+        mediaRecorder.start(100);
+        
+        // Set a longer timeout for streaming mode (10 seconds)
+        // This gives more time for natural conversation pauses
+        clearTimeout(streamingInterval);
+        streamingInterval = setTimeout(() => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                console.log('Stopping streaming after timeout...');
+                mediaRecorder.stop();
+                isRecording = false;
+            }
+        }, 10000);
+    }
+}
+
+// Stop audio streaming
+function stopAudioStreaming() {
+    isStreamingAudio = false;
+    clearTimeout(streamingInterval);
+    
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        isRecording = false;
+    }
+}
+
+// Send audio to the server for processing (batch mode)
 function sendAudioToServer(audioBlob) {
     if (socket && socket.connected) {
         // Convert blob to base64 to send over socket.io
@@ -333,7 +399,20 @@ function sendAudioToServer(audioBlob) {
     }
 }
 
-// Handle AI response from the server
+// Send audio chunk to server for real-time streaming
+function sendAudioChunkToServer(audioChunk) {
+    if (socket && socket.connected) {
+        // Convert chunk to base64 to send over socket.io
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64Audio = reader.result.split(',')[1];
+            socket.emit('audio_chunk', base64Audio);
+        };
+        reader.readAsDataURL(audioChunk);
+    }
+}
+
+// Handle AI response from the server (legacy batch mode)
 function handleAiResponse(data) {
     if (data.text) {
         addMessageToTranscript('AI Operator', data.text, 'ai');
@@ -346,6 +425,175 @@ function handleAiResponse(data) {
         const audio = new Audio(audioUrl);
         audio.play();
     }
+}
+
+// Handle partial transcript from the server
+function handlePartialTranscript(data) {
+    const { text, is_final } = data;
+    
+    if (text) {
+        if (is_final) {
+            // Final transcript, add to the transcript area
+            addMessageToTranscript('You', text, 'user');
+        } else {
+            // Partial transcript, update a temporary area
+            updatePartialTranscript(text);
+        }
+    }
+}
+
+// Update the partial transcript display
+function updatePartialTranscript(text) {
+    // Check if we already have a partial transcript element
+    let partialElement = document.getElementById('partial-transcript');
+    
+    if (!partialElement) {
+        // Create a new partial transcript element
+        partialElement = document.createElement('div');
+        partialElement.id = 'partial-transcript';
+        partialElement.className = 'message user partial';
+        
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar';
+        avatar.textContent = 'You';
+        
+        const content = document.createElement('div');
+        content.className = 'content';
+        
+        partialElement.appendChild(avatar);
+        partialElement.appendChild(content);
+        
+        // Add it to the transcript container
+        transcriptContainer.appendChild(partialElement);
+        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    }
+    
+    // Update the content
+    const content = partialElement.querySelector('.content');
+    if (content) {
+        content.textContent = text + '...';
+        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    }
+}
+
+// Remove the partial transcript element
+function clearPartialTranscript() {
+    const partialElement = document.getElementById('partial-transcript');
+    if (partialElement) {
+        partialElement.remove();
+    }
+}
+
+// Handle streaming text response from the server
+function handleStreamingResponse(data) {
+    const { text, is_final } = data;
+    
+    // Check if we already have a streaming response element
+    let responseElement = document.getElementById('streaming-response');
+    
+    if (is_final) {
+        // If this is the final chunk, remove the streaming element
+        // The complete response will be added by the audio handler
+        if (responseElement) {
+            responseElement.remove();
+        }
+        return;
+    }
+    
+    if (!responseElement) {
+        // Create a new streaming response element
+        responseElement = document.createElement('div');
+        responseElement.id = 'streaming-response';
+        responseElement.className = 'message ai streaming';
+        
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar';
+        avatar.textContent = 'AI';
+        
+        const content = document.createElement('div');
+        content.className = 'content';
+        content.textContent = '';
+        
+        responseElement.appendChild(avatar);
+        responseElement.appendChild(content);
+        
+        // Add it to the transcript container
+        transcriptContainer.appendChild(responseElement);
+    }
+    
+    // Update the content by appending the new text
+    const content = responseElement.querySelector('.content');
+    if (content) {
+        content.textContent += text;
+        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    }
+}
+
+// Handle streaming audio from the server
+function handleStreamingAudio(data) {
+    const { audio, chunk_index, total_chunks, is_final } = data;
+    
+    if (!audio) return;
+    
+    // Convert the base64 audio to a blob
+    const audioBlob = base64ToBlob(audio, 'audio/mpeg');
+    
+    // Add to the audio queue for sequential playback
+    audioQueue.push({
+        blob: audioBlob,
+        index: chunk_index,
+        total: total_chunks,
+        isFinal: is_final
+    });
+    
+    // Start playing if not already playing
+    if (!isPlayingAudio) {
+        playNextAudioChunk();
+    }
+}
+
+// Play the next audio chunk in the queue
+function playNextAudioChunk() {
+    if (audioQueue.length === 0) {
+        isPlayingAudio = false;
+        return;
+    }
+    
+    isPlayingAudio = true;
+    const audioItem = audioQueue.shift();
+    
+    // Create an audio element
+    const audioUrl = URL.createObjectURL(audioItem.blob);
+    const audio = new Audio(audioUrl);
+    
+    // When this chunk finishes, play the next one
+    audio.onended = () => {
+        // Small delay between chunks for more natural speech
+        setTimeout(() => {
+            playNextAudioChunk();
+        }, 50);
+        
+        // Clean up the URL object
+        URL.revokeObjectURL(audioUrl);
+    };
+    
+    // If this is the final chunk and there's a streaming response element,
+    // replace it with a permanent message
+    if (audioItem.isFinal) {
+        const streamingElement = document.getElementById('streaming-response');
+        if (streamingElement) {
+            const content = streamingElement.querySelector('.content');
+            if (content) {
+                // Add the complete response to the transcript
+                addMessageToTranscript('AI Operator', content.textContent, 'ai');
+                // Remove the streaming element
+                streamingElement.remove();
+            }
+        }
+    }
+    
+    // Play the audio
+    audio.play();
 }
 
 // Convert base64 to Blob
