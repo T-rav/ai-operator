@@ -13,7 +13,7 @@ import eventlet
 from datetime import datetime, timedelta
 
 # Load environment variables
-load_dotenv('env')
+load_dotenv('.env')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
