@@ -159,10 +159,44 @@ function initializeJitsiMeet(roomName) {
 function handleVideoConferenceJoined(event) {
     console.log('Video conference joined', event);
     
-    // Get the local audio track to capture for AI processing
-    if (aiEnabled) {
-        setupAudioCapture();
-    }
+    // Add a slight delay to ensure Jitsi is fully initialized
+    setTimeout(() => {
+        // Get the local audio track to capture for AI processing
+        if (aiEnabled) {
+            // Force reset of audio context and visualizer
+            if (audioContext) {
+                try {
+                    audioContext.close().catch(err => console.error('Error closing audio context:', err));
+                    audioContext = null;
+                    audioAnalyser = null;
+                    
+                    if (animationFrame) {
+                        cancelAnimationFrame(animationFrame);
+                        animationFrame = null;
+                    }
+                } catch (e) {
+                    console.error('Error resetting audio context:', e);
+                }
+            }
+            
+            // Setup audio capture with fresh context
+            setupAudioCapture();
+            
+            // Explicitly get the audio track from Jitsi API if available
+            try {
+                const tracks = jitsiApi.getLocalTracks();
+                const audioTrack = tracks.find(track => track.getType() === 'audio');
+                
+                if (audioTrack) {
+                    console.log('Found Jitsi audio track, setting up visualizer directly');
+                    const stream = new MediaStream([audioTrack.getTrack()]);
+                    setupAudioVisualizer(stream);
+                }
+            } catch (e) {
+                console.error('Error getting Jitsi tracks:', e);
+            }
+        }
+    }, 1000); // 1 second delay to ensure everything is loaded
 }
 
 // Event handler for when the local user leaves the conference
@@ -310,6 +344,47 @@ function setupAudioCapture() {
         });
 }
 
+// Function to get Jitsi audio track directly
+function getJitsiAudioTrack() {
+    if (!jitsiApi) {
+        console.warn('Jitsi API not available');
+        return null;
+    }
+    
+    try {
+        // Try to get local tracks from Jitsi API
+        const tracks = jitsiApi.getLocalTracks();
+        console.log('Got Jitsi tracks:', tracks);
+        
+        if (tracks && tracks.length > 0) {
+            // Find the audio track
+            const audioTrack = tracks.find(track => track.getType() === 'audio');
+            if (audioTrack) {
+                console.log('Found Jitsi audio track');
+                return audioTrack.getTrack();
+            }
+        }
+        
+        // If we can't get it from the API, try another approach
+        const participants = jitsiApi.getParticipantsInfo();
+        const localParticipant = participants.find(p => p.isLocal);
+        
+        if (localParticipant) {
+            console.log('Found local participant, attempting to get audio track');
+            // This is a more direct approach that might work in some cases
+            const audioTrack = jitsiApi._getParticipantAudioTrack(localParticipant.id);
+            if (audioTrack) {
+                return audioTrack;
+            }
+        }
+    } catch (e) {
+        console.error('Error getting Jitsi audio track:', e);
+    }
+    
+    console.warn('Could not get Jitsi audio track, falling back to getUserMedia');
+    return null;
+}
+
 // Setup audio visualizer
 function setupAudioVisualizer(stream) {
     if (!audioContext) {
@@ -325,8 +400,24 @@ function setupAudioVisualizer(stream) {
     
     // Create a new analyzer node
     try {
+        // Create a new analyzer
         audioAnalyser = audioContext.createAnalyser();
         audioAnalyser.fftSize = 256;
+        
+        // Try to get Jitsi track first if no stream provided
+        if (!stream) {
+            const jitsiTrack = getJitsiAudioTrack();
+            if (jitsiTrack) {
+                console.log('Using Jitsi audio track for visualizer');
+                stream = new MediaStream([jitsiTrack]);
+            }
+        }
+        
+        // If we still don't have a stream, log an error
+        if (!stream) {
+            console.error('No audio stream available for visualizer');
+            return;
+        }
         
         // Create a source from the stream
         const source = audioContext.createMediaStreamSource(stream);
@@ -356,39 +447,87 @@ function drawAudioVisualizer() {
         return;
     }
     
-    const canvasCtx = canvas.getContext('2d');
-    const bufferLength = audioAnalyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+    // Make sure canvas is properly sized
+    if (canvas.width === 0 || canvas.height === 0) {
+        canvas.width = 600;
+        canvas.height = 100;
+    }
     
     // Clear any existing animation frame to prevent multiple animations
     if (animationFrame) {
         cancelAnimationFrame(animationFrame);
+        animationFrame = null;
     }
     
+    const canvasCtx = canvas.getContext('2d');
+    const bufferLength = audioAnalyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    // Initial clear of canvas
+    canvasCtx.fillStyle = '#f5f5f5';
+    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Log that we're starting visualization
+    console.log('Starting audio visualization with buffer length:', bufferLength);
+    
     function draw() {
-        if (!audioAnalyser) return;
+        // Safety check to ensure we still have the analyzer
+        if (!audioAnalyser || !audioContext) {
+            console.warn('Audio analyzer no longer available, stopping visualization');
+            return;
+        }
         
+        // Request next frame first to ensure smooth animation
         animationFrame = requestAnimationFrame(draw);
         
-        audioAnalyser.getByteFrequencyData(dataArray);
-        
-        canvasCtx.fillStyle = '#f5f5f5';
-        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        const barWidth = (canvas.width / bufferLength) * 2.5;
-        let barHeight;
-        let x = 0;
-        
-        for (let i = 0; i < bufferLength; i++) {
-            barHeight = dataArray[i] / 2;
+        try {
+            // Get frequency data
+            audioAnalyser.getByteFrequencyData(dataArray);
             
-            canvasCtx.fillStyle = `rgb(${barHeight + 100}, 50, 50)`;
-            canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+            // Clear canvas
+            canvasCtx.fillStyle = '#f5f5f5';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
             
-            x += barWidth + 1;
+            // Check if we're getting any audio data (not all zeros)
+            let hasAudioData = false;
+            for (let i = 0; i < bufferLength; i++) {
+                if (dataArray[i] > 0) {
+                    hasAudioData = true;
+                    break;
+                }
+            }
+            
+            if (!hasAudioData) {
+                // If no audio data, draw a flat line
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(0, canvas.height / 2);
+                canvasCtx.lineTo(canvas.width, canvas.height / 2);
+                canvasCtx.strokeStyle = 'rgb(150, 150, 150)';
+                canvasCtx.stroke();
+                return;
+            }
+            
+            // Draw frequency bars
+            const barWidth = (canvas.width / bufferLength) * 2.5;
+            let barHeight;
+            let x = 0;
+            
+            for (let i = 0; i < bufferLength; i++) {
+                barHeight = dataArray[i] / 2;
+                
+                // Use a gradient color based on frequency
+                canvasCtx.fillStyle = `rgb(${barHeight + 100}, 50, 50)`;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
+        } catch (e) {
+            console.error('Error in audio visualization:', e);
+            // Don't cancel animation frame here, just log the error and continue
         }
     }
     
+    // Start the visualization loop
     draw();
 }
 
