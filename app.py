@@ -78,9 +78,50 @@ def process_audio_chunk(sid, audio_chunk):
         # Check if we have enough audio data to process (at least 0.5 seconds)
         # For real-time streaming, we want to process smaller chunks
         if len(session['buffer']) > 8000:  # Approximate size for 0.5s of audio
-            # Create a file-like object from the buffer
+            # Create a file-like object directly from the buffer
             audio_file = io.BytesIO(session['buffer'])
-            audio_file.name = 'audio.webm'  # Set a filename with extension
+            
+            # Log the size of the audio buffer for debugging
+            logger.info(f"Audio buffer size: {len(session['buffer'])} bytes")
+            
+            # Use the format information from the session if available
+            if 'audio_format' in session:
+                format_info = session['audio_format']
+                logger.info(f"Using format from session: {format_info}")
+                
+                # Map MIME types to file extensions
+                if 'wav' in format_info:
+                    audio_file.name = 'audio.wav'
+                elif 'mp3' in format_info:
+                    audio_file.name = 'audio.mp3'
+                elif 'webm' in format_info:
+                    audio_file.name = 'audio.webm'
+                elif 'ogg' in format_info:
+                    audio_file.name = 'audio.ogg'
+                else:
+                    # Default to WAV if we don't recognize the format
+                    audio_file.name = 'audio.wav'
+            else:
+                # Fallback to detection based on header bytes if no format info in session
+                header = session['buffer'][:4]
+                logger.info(f"Detecting format from header bytes: {header.hex()}")
+                
+                if header.startswith(b'RIFF'):  # WAV file signature
+                    audio_file.name = 'audio.wav'
+                    logger.info("Detected WAV format")
+                elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'):  # MP3 signatures
+                    audio_file.name = 'audio.mp3'
+                    logger.info("Detected MP3 format")
+                elif header.startswith(b'1A45DFA3'):  # WebM signature
+                    audio_file.name = 'audio.webm'
+                    logger.info("Detected WebM format")
+                elif header.startswith(b'OggS'):  # Ogg signature
+                    audio_file.name = 'audio.ogg'
+                    logger.info("Detected OGG format")
+                else:
+                    # If we can't detect the format, default to WAV
+                    logger.info(f"Unknown audio format, defaulting to WAV")
+                    audio_file.name = 'audio.wav'
             
             # Transcribe the audio chunk
             try:
@@ -274,8 +315,23 @@ def audio_chunk(sid, data):
     """Receive streaming audio chunk from the client"""
     logger.debug(f"Received audio chunk from {sid}")
     
-    # Process the audio chunk in the background
-    eventlet.spawn(process_audio_chunk, sid, data)
+    # Check if data is a dictionary with format information or just raw base64
+    if isinstance(data, dict) and 'data' in data:
+        # Extract the audio data and format information
+        audio_base64 = data['data']
+        audio_format = data.get('format', 'audio/webm')
+        logger.info(f"Audio format from client: {audio_format}")
+        
+        # Store format information in the session
+        if sid in active_streaming_sessions:
+            active_streaming_sessions[sid]['audio_format'] = audio_format
+        
+        # Process the audio chunk in the background
+        eventlet.spawn(process_audio_chunk, sid, audio_base64)
+    else:
+        # Legacy format - just base64 data
+        # Process the audio chunk in the background
+        eventlet.spawn(process_audio_chunk, sid, data)
 
 @sio.event
 def end_audio_stream(sid):

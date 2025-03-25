@@ -220,8 +220,24 @@ function setupAudioCapture() {
             mediaStream = stream;
             
             // Create a media recorder to capture audio with higher quality and smaller chunks
-            // for real-time streaming
-            const options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 };
+            // for real-time streaming - using WAV format which is directly supported by OpenAI
+            let options;
+            
+            // Try to use WAV format first (directly supported by OpenAI)
+            try {
+                if (MediaRecorder.isTypeSupported('audio/wav')) {
+                    options = { mimeType: 'audio/wav', audioBitsPerSecond: 128000 };
+                } else if (MediaRecorder.isTypeSupported('audio/mp3')) {
+                    options = { mimeType: 'audio/mp3', audioBitsPerSecond: 128000 };
+                } else {
+                    // Fallback to WebM if WAV is not supported
+                    options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 };
+                }
+            } catch (e) {
+                console.error('Error checking audio format support:', e);
+                // Default fallback
+                options = { audioBitsPerSecond: 128000 };
+            }
             mediaRecorder = new MediaRecorder(stream, options);
             
             mediaRecorder.ondataavailable = event => {
@@ -406,7 +422,12 @@ function sendAudioChunkToServer(audioChunk) {
         const reader = new FileReader();
         reader.onloadend = () => {
             const base64Audio = reader.result.split(',')[1];
-            socket.emit('audio_chunk', base64Audio);
+            // Send both the audio data and the format information
+            socket.emit('audio_chunk', {
+                data: base64Audio,
+                format: audioChunk.type || 'audio/webm' // Include the MIME type
+            });
+            console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
         };
         reader.readAsDataURL(audioChunk);
     }
