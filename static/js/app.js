@@ -673,7 +673,7 @@ function updatePartialTranscript(text) {
         
         const avatar = document.createElement('div');
         avatar.className = 'avatar';
-        avatar.textContent = 'You'; // First letter of 'You'
+        avatar.textContent = 'You'; 
         
         const content = document.createElement('div');
         content.className = 'content';
