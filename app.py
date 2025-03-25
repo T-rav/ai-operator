@@ -85,77 +85,11 @@ def process_audio_chunk(sid, audio_chunk):
             format_info = session.get('audio_format', '')
             logger.info(f"Using format from session: {format_info}")
             
-            # For WebM with Opus codec, we need to convert to a supported format
-            if 'webm' in format_info and 'opus' in format_info:
-                try:
-                    # Import pydub for audio conversion
-                    from pydub import AudioSegment
-                    import tempfile
-                    
-                    # Create temporary files for the conversion process
-                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as webm_file:
-                        webm_file.write(session['buffer'])
-                        webm_path = webm_file.name
-                    
-                    # Convert WebM to MP3 using pydub
-                    try:
-                        audio = AudioSegment.from_file(webm_path, format="webm")
-                        mp3_path = webm_path.replace('.webm', '.mp3')
-                        audio.export(mp3_path, format="mp3")
-                        
-                        # Use the converted MP3 file
-                        with open(mp3_path, 'rb') as mp3_file:
-                            audio_file = io.BytesIO(mp3_file.read())
-                            audio_file.name = 'audio.mp3'
-                            logger.info("Successfully converted WebM to MP3")
-                            
-                        # Clean up temporary files
-                        import os
-                        os.remove(webm_path)
-                        os.remove(mp3_path)
-                    except Exception as e:
-                        logger.error(f"Error converting WebM to MP3: {e}")
-                        # Fallback to using the original buffer
-                        audio_file = io.BytesIO(session['buffer'])
-                        audio_file.name = 'audio.webm'
-                except ImportError:
-                    logger.error("pydub not available for audio conversion")
-                    audio_file = io.BytesIO(session['buffer'])
-                    audio_file.name = 'audio.webm'
-            else:
-                # Create a file-like object directly from the buffer
-                audio_file = io.BytesIO(session['buffer'])
-                
-                # Map MIME types to file extensions
-                if 'wav' in format_info:
-                    audio_file.name = 'audio.wav'
-                elif 'mp3' in format_info:
-                    audio_file.name = 'audio.mp3'
-                elif 'webm' in format_info:
-                    audio_file.name = 'audio.webm'
-                elif 'ogg' in format_info:
-                    audio_file.name = 'audio.ogg'
-                else:
-                    # Fallback to detection based on header bytes
-                    header = session['buffer'][:4]
-                    logger.info(f"Detecting format from header bytes: {header.hex()}")
-                    
-                    if header.startswith(b'RIFF'):  # WAV file signature
-                        audio_file.name = 'audio.wav'
-                        logger.info("Detected WAV format")
-                    elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'):  # MP3 signatures
-                        audio_file.name = 'audio.mp3'
-                        logger.info("Detected MP3 format")
-                    elif header.startswith(b'1A45DFA3'):  # WebM signature
-                        audio_file.name = 'audio.webm'
-                        logger.info("Detected WebM format")
-                    elif header.startswith(b'OggS'):  # Ogg signature
-                        audio_file.name = 'audio.ogg'
-                        logger.info("Detected OGG format")
-                    else:
-                        # If we can't detect the format, default to WAV
-                        logger.info(f"Unknown audio format, defaulting to WAV")
-                        audio_file.name = 'audio.wav'
+            # Create a file-like object directly from the buffer
+            # Use WebM format consistently since that's what the browser is sending
+            audio_file = io.BytesIO(session['buffer'])
+            audio_file.name = 'audio.webm'
+
             
             # Transcribe the audio chunk
             try:
@@ -353,17 +287,19 @@ def audio_chunk(sid, data):
     if isinstance(data, dict) and 'data' in data:
         # Extract the audio data and format information
         audio_base64 = data['data']
-        audio_format = data.get('format', 'audio/webm')
+        audio_format = data.get('format', 'audio/wav')
         logger.info(f"Audio format from client: {audio_format}")
         
         # Store format information in the session
         if sid in active_streaming_sessions:
             active_streaming_sessions[sid]['audio_format'] = audio_format
+            logger.info(f"Set session audio format to: {audio_format}")
         
         # Process the audio chunk in the background
         eventlet.spawn(process_audio_chunk, sid, audio_base64)
     else:
         # Legacy format - just base64 data
+        logger.info("Received legacy format audio data without format information")
         # Process the audio chunk in the background
         eventlet.spawn(process_audio_chunk, sid, data)
 

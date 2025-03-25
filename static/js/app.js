@@ -280,20 +280,32 @@ function setupAudioCapture() {
             // for real-time streaming - using WAV format which is directly supported by OpenAI
             let options;
             
-            // Try to use WAV format first (directly supported by OpenAI)
+            // Use WebM format consistently since it's well supported by browsers and OpenAI
             try {
-                if (MediaRecorder.isTypeSupported('audio/wav')) {
-                    options = { mimeType: 'audio/wav', audioBitsPerSecond: 128000 };
-                } else if (MediaRecorder.isTypeSupported('audio/mp3')) {
-                    options = { mimeType: 'audio/mp3', audioBitsPerSecond: 128000 };
+                console.log('Setting up audio recording with WebM format');
+                
+                if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                    options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
+                    console.log('Using WebM with Opus codec for recording');
+                } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                    options = { mimeType: 'audio/webm', audioBitsPerSecond: 16000 };
+                    console.log('Using WebM format for recording');
                 } else {
-                    // Fallback to WebM if WAV is not supported
-                    options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 };
+                    // Fallback options if WebM is not supported
+                    console.log('WebM not supported, trying alternative formats');
+                    if (MediaRecorder.isTypeSupported('audio/mp3')) {
+                        options = { mimeType: 'audio/mp3', audioBitsPerSecond: 16000 };
+                        console.log('Using MP3 format for recording');
+                    } else {
+                        // Last resort fallback
+                        console.log('No specific format supported, using browser default');
+                        options = { audioBitsPerSecond: 16000 };
+                    }
                 }
             } catch (e) {
                 console.error('Error checking audio format support:', e);
                 // Default fallback
-                options = { audioBitsPerSecond: 128000 };
+                options = { audioBitsPerSecond: 16000 };
             }
             mediaRecorder = new MediaRecorder(stream, options);
             
@@ -312,7 +324,8 @@ function setupAudioCapture() {
             mediaRecorder.onstop = () => {
                 if (!isStreamingAudio && audioChunks.length > 0 && aiEnabled) {
                     // In batch mode, send the complete audio blob
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    // Use the same MIME type that was used for recording
+                    const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/wav' });
                     console.log('Sending audio blob to server, size:', audioBlob.size);
                     sendAudioToServer(audioBlob);
                     audioChunks = [];
@@ -660,7 +673,7 @@ function updatePartialTranscript(text) {
         
         const avatar = document.createElement('div');
         avatar.className = 'avatar';
-        avatar.textContent = 'You';
+        avatar.textContent = 'You'; // First letter of 'You'
         
         const content = document.createElement('div');
         content.className = 'content';
@@ -845,23 +858,30 @@ function updateAiStatus(isOnline) {
 function addMessageToTranscript(sender, message, type) {
     const messageElement = document.createElement('div');
     messageElement.classList.add('message');
-    messageElement.classList.add(`${type}-message`);
+    messageElement.classList.add(type); // Use the CSS class for styling (user, ai, system)
     
-    const headerElement = document.createElement('div');
-    headerElement.classList.add('message-header');
-    headerElement.textContent = sender;
+    // Create avatar element
+    const avatarElement = document.createElement('div');
+    avatarElement.classList.add('avatar');
+    avatarElement.textContent = sender.charAt(0).toUpperCase(); // First letter of sender name
     
+    // Create content element
     const contentElement = document.createElement('div');
-    contentElement.classList.add('message-content');
+    contentElement.classList.add('content');
     contentElement.textContent = message;
     
-    messageElement.appendChild(headerElement);
+    // Add elements to message container
+    messageElement.appendChild(avatarElement);
     messageElement.appendChild(contentElement);
     
+    // Add to transcript container
     transcriptContainer.appendChild(messageElement);
     
     // Scroll to the bottom of the transcript container
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    
+    // Log for debugging
+    console.log(`Added ${type} message from ${sender}: ${message.substring(0, 30)}...`);
 }
 
 // Event listeners
