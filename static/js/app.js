@@ -79,6 +79,16 @@ function initializeJitsiMeet(roomName) {
             enableNoisyMicDetection: false,
             enableNoAudioDetection: false,
             enableLobbyChat: false,
+            // Hide toolbar completely
+            toolbarConfig: {
+                alwaysVisible: false,
+                autoHideWhileChatIsOpen: true,
+                initialTimeout: 0,  // toolbar will auto-hide immediately
+                timeout: 0        // time in ms before the toolbar auto-hides
+            },
+            // Disable welcome page and profile
+            enableWelcomePage: false,
+            disableProfile: true,
             p2p: {
                 enabled: true,
                 preferredCodec: 'VP9',
@@ -87,11 +97,8 @@ function initializeJitsiMeet(roomName) {
             },
         },
         interfaceConfigOverwrite: {
-            TOOLBAR_BUTTONS: [
-                'microphone', 'camera', 'desktop', 'fullscreen',
-                'hangup', 'chat', 'settings', 'raisehand',
-                'videoquality', 'filmstrip', 'tileview'
-            ],
+            // Empty toolbar - this effectively removes all buttons
+            TOOLBAR_BUTTONS: [],
             DISABLE_JOIN_LEAVE_NOTIFICATIONS: true,
             DISABLE_FOCUS_INDICATOR: true,
             DEFAULT_REMOTE_DISPLAY_NAME: 'Participant',
@@ -105,32 +112,27 @@ function initializeJitsiMeet(roomName) {
         userInfo: {
             displayName: 'User'
         },
-        configOverwrite: {
-            // Basic configuration to avoid authentication
-            prejoinPageEnabled: false,
-            startWithAudioMuted: false,
-            startWithVideoMuted: false,
-            enableWelcomePage: false,
-            enableClosePage: false,
-            disableProfile: true,
-            disableDeepLinking: true,
-            p2p: {
-                enabled: true
-            }
-        },
+        // Remove this duplicate configOverwrite as it's conflicting with the one above
+        
         interfaceConfigOverwrite: {
-            TOOLBAR_BUTTONS: [
-                'microphone', 'camera', 'desktop', 'fullscreen',
-                'hangup', 'chat', 'settings', 'raisehand',
-                'videoquality', 'filmstrip', 'tileview'
-            ],
+            // Empty toolbar - this effectively removes all buttons
+            TOOLBAR_BUTTONS: [],
+            
+            // Hide various UI elements
             SHOW_JITSI_WATERMARK: false,
             SHOW_WATERMARK_FOR_GUESTS: false,
             DEFAULT_BACKGROUND: '#ffffff',
             DEFAULT_REMOTE_DISPLAY_NAME: 'Participant',
-            TOOLBAR_ALWAYS_VISIBLE: true,
+            
+            // Hide toolbar completely
+            TOOLBAR_ALWAYS_VISIBLE: false,
+            AUTO_HIDE_HEADER: true,
+            INITIAL_TOOLBAR_TIMEOUT: 0,
+            TOOLBAR_TIMEOUT: 0,
+            HIDE_INVITE_MORE_HEADER: true,
+            
             // Hide authentication-related UI elements
-            SETTINGS_SECTIONS: ['devices', 'language'],
+            SETTINGS_SECTIONS: [],
             SHOW_PROMOTIONAL_CLOSE_PAGE: false,
             AUTHENTICATION_ENABLE: false,
             GENERATE_ROOMNAMES_ON_WELCOME_PAGE: false,
