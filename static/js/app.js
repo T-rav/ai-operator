@@ -653,7 +653,9 @@ function sendAudioChunkToServer(audioChunk) {
 
 // Handle AI response from the server (legacy batch mode)
 function handleAiResponse(data) {
+    console.log('Received AI response:', data);
     if (data.text) {
+        console.log('Adding AI response to transcript:', data.text);
         addMessageToTranscript('AI Operator', data.text, 'ai');
     }
     
@@ -725,6 +727,7 @@ function clearPartialTranscript() {
 
 // Handle streaming text response from the server
 function handleStreamingResponse(data) {
+    console.log('Received streaming response:', data);
     const { text, is_final } = data;
     
     // Check if we already have a streaming response element
@@ -747,7 +750,7 @@ function handleStreamingResponse(data) {
         
         const avatar = document.createElement('div');
         avatar.className = 'avatar';
-        avatar.textContent = 'AI';
+        avatar.textContent = 'AI';  // This will be displayed in the avatar
         
         const content = document.createElement('div');
         content.className = 'content';
@@ -770,6 +773,7 @@ function handleStreamingResponse(data) {
 
 // Handle streaming audio from the server
 function handleStreamingAudio(data) {
+    console.log('Received streaming audio chunk:', data.chunk_index, 'of', data.total_chunks, 'is_final:', data.is_final);
     const { audio, chunk_index, total_chunks, is_final } = data;
     
     if (!audio) return;
@@ -819,15 +823,23 @@ function playNextAudioChunk() {
     // If this is the final chunk and there's a streaming response element,
     // replace it with a permanent message
     if (audioItem.isFinal) {
+        console.log('Final audio chunk, adding permanent message to transcript');
         const streamingElement = document.getElementById('streaming-response');
         if (streamingElement) {
             const content = streamingElement.querySelector('.content');
             if (content) {
+                console.log('Found streaming content:', content.textContent);
                 // Add the complete response to the transcript
                 addMessageToTranscript('AI Operator', content.textContent, 'ai');
                 // Remove the streaming element
                 streamingElement.remove();
+            } else {
+                console.error('No content element found in streaming response');
             }
+        } else {
+            console.error('No streaming response element found for final audio chunk');
+            // If there's no streaming element, create a fallback message
+            addMessageToTranscript('AI Operator', 'Response received', 'ai');
         }
     }
     
@@ -877,6 +889,7 @@ function updateAiStatus(isOnline) {
 
 // Add message to the transcript container
 function addMessageToTranscript(sender, message, type) {
+    console.log('Adding message to transcript:', { sender, type, messageLength: message?.length });
     const messageElement = document.createElement('div');
     messageElement.classList.add('message');
     messageElement.classList.add(type); // Use the CSS class for styling (user, ai, system)
@@ -888,7 +901,7 @@ function addMessageToTranscript(sender, message, type) {
     // Use specific text for different sender types
     if (sender === 'You') {
         avatarElement.textContent = sender;
-    } else if (sender === 'AI Operator') {
+    } else if (sender === 'AI Operator' || sender === 'AI') {
         avatarElement.textContent = 'AI';
     } else {
         avatarElement.textContent = sender.charAt(0).toUpperCase(); // First letter of sender name
