@@ -884,7 +884,15 @@ function addMessageToTranscript(sender, message, type) {
     // Create avatar element
     const avatarElement = document.createElement('div');
     avatarElement.classList.add('avatar');
-    avatarElement.textContent = sender.charAt(0).toUpperCase(); // First letter of sender name
+    
+    // Use specific text for different sender types
+    if (sender === 'You') {
+        avatarElement.textContent = sender;
+    } else if (sender === 'AI Operator') {
+        avatarElement.textContent = 'AI';
+    } else {
+        avatarElement.textContent = sender.charAt(0).toUpperCase(); // First letter of sender name
+    }
     
     // Create content element
     const contentElement = document.createElement('div');
