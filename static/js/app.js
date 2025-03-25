@@ -400,9 +400,17 @@ function getJitsiAudioTrack() {
 
 // Setup audio visualizer
 function setupAudioVisualizer(stream) {
+    console.log('Setting up audio visualizer...');
+    
+    // Initialize audio context if it doesn't exist
     if (!audioContext) {
-        console.warn('No audio context available for visualizer');
-        return;
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            console.log('Created new audio context for visualizer');
+        } catch (e) {
+            console.error('Failed to create audio context:', e);
+            return;
+        }
     }
     
     // Cancel any existing animation frame to prevent multiple visualizers
@@ -426,15 +434,21 @@ function setupAudioVisualizer(stream) {
             }
         }
         
-        // If we still don't have a stream, log an error
+        // If we still don't have a stream, create a silent audio node
         if (!stream) {
-            console.error('No audio stream available for visualizer');
-            return;
+            console.log('No audio stream available, creating silent oscillator for visualization');
+            const oscillator = audioContext.createOscillator();
+            oscillator.frequency.setValueAtTime(0, audioContext.currentTime); // Silent
+            const gainNode = audioContext.createGain();
+            gainNode.gain.setValueAtTime(0, audioContext.currentTime); // Silent
+            oscillator.connect(gainNode);
+            gainNode.connect(audioAnalyser);
+            oscillator.start();
+        } else {
+            // Create a source from the stream
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(audioAnalyser);
         }
-        
-        // Create a source from the stream
-        const source = audioContext.createMediaStreamSource(stream);
-        source.connect(audioAnalyser);
         
         console.log('Audio visualizer setup complete');
         
@@ -447,6 +461,8 @@ function setupAudioVisualizer(stream) {
 
 // Draw audio visualizer
 function drawAudioVisualizer() {
+    console.log('Drawing audio visualizer...');
+    
     // Check if we have the necessary components
     if (!audioAnalyser || !audioContext) {
         console.warn('Audio analyzer or context not available for visualization');
@@ -475,6 +491,11 @@ function drawAudioVisualizer() {
     const canvasCtx = canvas.getContext('2d');
     const bufferLength = audioAnalyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
+    
+    // Fill with initial data to ensure something is displayed
+    for (let i = 0; i < bufferLength; i++) {
+        dataArray[i] = Math.floor(Math.random() * 20); // Random low values for initial state
+    }
     
     // Initial clear of canvas
     canvasCtx.fillStyle = '#f5f5f5';
@@ -897,6 +918,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Initialize Socket.IO connection
             initializeSocket();
             
+            // Initialize audio visualizer immediately
+            initializeAudioVisualizer();
+            
             // Automatically start the meeting
             setTimeout(() => {
                 // Remove the iframe that might be causing issues
@@ -934,3 +958,34 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // AI is always enabled by default
 });
+
+// Initialize audio visualizer without waiting for audio stream
+function initializeAudioVisualizer() {
+    console.log('Initializing audio visualizer on page load');
+    
+    // Create audio context if it doesn't exist
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.error('Failed to create audio context:', e);
+            return;
+        }
+    }
+    
+    // Create analyzer
+    audioAnalyser = audioContext.createAnalyser();
+    audioAnalyser.fftSize = 256;
+    
+    // Create silent oscillator for initial visualization
+    const oscillator = audioContext.createOscillator();
+    oscillator.frequency.setValueAtTime(0, audioContext.currentTime);
+    const gainNode = audioContext.createGain();
+    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    oscillator.connect(gainNode);
+    gainNode.connect(audioAnalyser);
+    oscillator.start();
+    
+    // Start drawing
+    drawAudioVisualizer();
+}
