@@ -209,8 +209,26 @@ function handleParticipantLeft(event) {
 // Setup audio capture from the Jitsi Meet conference
 function setupAudioCapture() {
     console.log('Setting up audio capture...');
-    if (!audioContext) {
+    
+    // Always create a new AudioContext to ensure proper initialization
+    try {
+        // Close previous context if it exists to prevent memory leaks
+        if (audioContext) {
+            audioContext.close().catch(err => console.error('Error closing audio context:', err));
+        }
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        console.log('Created new audio context, state:', audioContext.state);
+        
+        // Resume the audio context if it's suspended (needed for some browsers)
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().then(() => {
+                console.log('AudioContext resumed successfully');
+            }).catch(err => {
+                console.error('Failed to resume AudioContext:', err);
+            });
+        }
+    } catch (e) {
+        console.error('Error initializing AudioContext:', e);
     }
     
     // Get the local audio stream from Jitsi Meet
@@ -218,6 +236,9 @@ function setupAudioCapture() {
         .then(stream => {
             console.log('Got audio stream, setting up recorder...');
             mediaStream = stream;
+            
+            // Setup the audio visualizer immediately after getting the stream
+            setupAudioVisualizer(stream);
             
             // Create a media recorder to capture audio with higher quality and smaller chunks
             // for real-time streaming - using WAV format which is directly supported by OpenAI
@@ -290,24 +311,41 @@ function setupAudioCapture() {
 // Setup audio visualizer
 function setupAudioVisualizer(stream) {
     if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        console.warn('No audio context available for visualizer');
+        return;
     }
     
-    // Create an analyzer node
-    audioAnalyser = audioContext.createAnalyser();
-    audioAnalyser.fftSize = 256;
+    // Cancel any existing animation frame to prevent multiple visualizers
+    if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+    }
     
-    // Create a source from the stream
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(audioAnalyser);
-    
-    // Start drawing the visualizer
-    drawAudioVisualizer();
+    // Create a new analyzer node
+    try {
+        audioAnalyser = audioContext.createAnalyser();
+        audioAnalyser.fftSize = 256;
+        
+        // Create a source from the stream
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(audioAnalyser);
+        
+        console.log('Audio visualizer setup complete');
+        
+        // Start drawing the visualizer
+        drawAudioVisualizer();
+    } catch (e) {
+        console.error('Error setting up audio visualizer:', e);
+    }
 }
 
 // Draw audio visualizer
 function drawAudioVisualizer() {
-    if (!audioAnalyser) return;
+    // Check if we have the necessary components
+    if (!audioAnalyser || !audioContext) {
+        console.warn('Audio analyzer or context not available for visualization');
+        return;
+    }
     
     // Get the canvas element by ID
     const canvas = document.getElementById('audio-visualizer');
@@ -319,6 +357,11 @@ function drawAudioVisualizer() {
     const canvasCtx = canvas.getContext('2d');
     const bufferLength = audioAnalyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
+    
+    // Clear any existing animation frame to prevent multiple animations
+    if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+    }
     
     function draw() {
         if (!audioAnalyser) return;

@@ -78,16 +78,53 @@ def process_audio_chunk(sid, audio_chunk):
         # Check if we have enough audio data to process (at least 0.5 seconds)
         # For real-time streaming, we want to process smaller chunks
         if len(session['buffer']) > 8000:  # Approximate size for 0.5s of audio
-            # Create a file-like object directly from the buffer
-            audio_file = io.BytesIO(session['buffer'])
-            
             # Log the size of the audio buffer for debugging
             logger.info(f"Audio buffer size: {len(session['buffer'])} bytes")
             
-            # Use the format information from the session if available
-            if 'audio_format' in session:
-                format_info = session['audio_format']
-                logger.info(f"Using format from session: {format_info}")
+            # Get format information from the session
+            format_info = session.get('audio_format', '')
+            logger.info(f"Using format from session: {format_info}")
+            
+            # For WebM with Opus codec, we need to convert to a supported format
+            if 'webm' in format_info and 'opus' in format_info:
+                try:
+                    # Import pydub for audio conversion
+                    from pydub import AudioSegment
+                    import tempfile
+                    
+                    # Create temporary files for the conversion process
+                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as webm_file:
+                        webm_file.write(session['buffer'])
+                        webm_path = webm_file.name
+                    
+                    # Convert WebM to MP3 using pydub
+                    try:
+                        audio = AudioSegment.from_file(webm_path, format="webm")
+                        mp3_path = webm_path.replace('.webm', '.mp3')
+                        audio.export(mp3_path, format="mp3")
+                        
+                        # Use the converted MP3 file
+                        with open(mp3_path, 'rb') as mp3_file:
+                            audio_file = io.BytesIO(mp3_file.read())
+                            audio_file.name = 'audio.mp3'
+                            logger.info("Successfully converted WebM to MP3")
+                            
+                        # Clean up temporary files
+                        import os
+                        os.remove(webm_path)
+                        os.remove(mp3_path)
+                    except Exception as e:
+                        logger.error(f"Error converting WebM to MP3: {e}")
+                        # Fallback to using the original buffer
+                        audio_file = io.BytesIO(session['buffer'])
+                        audio_file.name = 'audio.webm'
+                except ImportError:
+                    logger.error("pydub not available for audio conversion")
+                    audio_file = io.BytesIO(session['buffer'])
+                    audio_file.name = 'audio.webm'
+            else:
+                # Create a file-like object directly from the buffer
+                audio_file = io.BytesIO(session['buffer'])
                 
                 # Map MIME types to file extensions
                 if 'wav' in format_info:
@@ -99,29 +136,26 @@ def process_audio_chunk(sid, audio_chunk):
                 elif 'ogg' in format_info:
                     audio_file.name = 'audio.ogg'
                 else:
-                    # Default to WAV if we don't recognize the format
-                    audio_file.name = 'audio.wav'
-            else:
-                # Fallback to detection based on header bytes if no format info in session
-                header = session['buffer'][:4]
-                logger.info(f"Detecting format from header bytes: {header.hex()}")
-                
-                if header.startswith(b'RIFF'):  # WAV file signature
-                    audio_file.name = 'audio.wav'
-                    logger.info("Detected WAV format")
-                elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'):  # MP3 signatures
-                    audio_file.name = 'audio.mp3'
-                    logger.info("Detected MP3 format")
-                elif header.startswith(b'1A45DFA3'):  # WebM signature
-                    audio_file.name = 'audio.webm'
-                    logger.info("Detected WebM format")
-                elif header.startswith(b'OggS'):  # Ogg signature
-                    audio_file.name = 'audio.ogg'
-                    logger.info("Detected OGG format")
-                else:
-                    # If we can't detect the format, default to WAV
-                    logger.info(f"Unknown audio format, defaulting to WAV")
-                    audio_file.name = 'audio.wav'
+                    # Fallback to detection based on header bytes
+                    header = session['buffer'][:4]
+                    logger.info(f"Detecting format from header bytes: {header.hex()}")
+                    
+                    if header.startswith(b'RIFF'):  # WAV file signature
+                        audio_file.name = 'audio.wav'
+                        logger.info("Detected WAV format")
+                    elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'):  # MP3 signatures
+                        audio_file.name = 'audio.mp3'
+                        logger.info("Detected MP3 format")
+                    elif header.startswith(b'1A45DFA3'):  # WebM signature
+                        audio_file.name = 'audio.webm'
+                        logger.info("Detected WebM format")
+                    elif header.startswith(b'OggS'):  # Ogg signature
+                        audio_file.name = 'audio.ogg'
+                        logger.info("Detected OGG format")
+                    else:
+                        # If we can't detect the format, default to WAV
+                        logger.info(f"Unknown audio format, defaulting to WAV")
+                        audio_file.name = 'audio.wav'
             
             # Transcribe the audio chunk
             try:
