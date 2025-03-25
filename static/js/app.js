@@ -725,6 +725,9 @@ function clearPartialTranscript() {
     }
 }
 
+// Variable to store the complete AI response text
+let completeAiResponseText = '';
+
 // Handle streaming text response from the server
 function handleStreamingResponse(data) {
     console.log('Received streaming response:', data);
@@ -734,13 +737,20 @@ function handleStreamingResponse(data) {
     let responseElement = document.getElementById('streaming-response');
     
     if (is_final) {
-        // If this is the final chunk, remove the streaming element
-        // The complete response will be added by the audio handler
+        // If this is the final chunk, store the complete text in a global variable
+        // so the audio handler can access it
         if (responseElement) {
-            responseElement.remove();
+            const content = responseElement.querySelector('.content');
+            if (content) {
+                completeAiResponseText = content.textContent;
+                console.log('Stored complete AI response:', completeAiResponseText);
+            }
+            // Don't remove the element yet, let the audio handler do it
         }
         return;
     }
+    
+    // For non-final chunks, append the text to build the complete response
     
     if (!responseElement) {
         // Create a new streaming response element
@@ -825,7 +835,22 @@ function playNextAudioChunk() {
     if (audioItem.isFinal) {
         console.log('Final audio chunk, adding permanent message to transcript');
         const streamingElement = document.getElementById('streaming-response');
-        if (streamingElement) {
+        
+        // Use the stored complete text if available
+        if (completeAiResponseText) {
+            console.log('Using stored complete AI response:', completeAiResponseText);
+            // Add the complete response to the transcript
+            addMessageToTranscript('AI Operator', completeAiResponseText, 'ai');
+            
+            // Reset the stored text for the next response
+            completeAiResponseText = '';
+            
+            // Remove the streaming element if it exists
+            if (streamingElement) {
+                streamingElement.remove();
+            }
+        } else if (streamingElement) {
+            // Fallback to the streaming element content if available
             const content = streamingElement.querySelector('.content');
             if (content) {
                 console.log('Found streaming content:', content.textContent);
@@ -835,11 +860,13 @@ function playNextAudioChunk() {
                 streamingElement.remove();
             } else {
                 console.error('No content element found in streaming response');
+                // If there's no content, use a more informative fallback message
+                addMessageToTranscript('AI Operator', 'I heard you, but I couldn\'t generate a proper response.', 'ai');
             }
         } else {
             console.error('No streaming response element found for final audio chunk');
             // If there's no streaming element, create a fallback message
-            addMessageToTranscript('AI Operator', 'Response received', 'ai');
+            addMessageToTranscript('AI Operator', 'I heard you, but I couldn\'t generate a proper response.', 'ai');
         }
     }
     
