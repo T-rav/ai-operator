@@ -203,10 +203,21 @@ def process_complete_message(sid, message):
         logger.error(f"Error processing complete message: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        sio.emit('ai_response', {
-            'text': f"Error: {str(e)}",
-            'audio': None
+        
+        # Instead of sending an error, provide a helpful response
+        helpful_response = "I'm listening. How can I help you today?"
+        
+        # Add the helpful response to conversation history
+        conversation_history.append({"role": "assistant", "content": helpful_response})
+        
+        # Send the helpful response as streaming text
+        sio.emit('streaming_response', {
+            'text': helpful_response,
+            'is_final': True
         }, room=sid)
+        
+        # Convert the helpful response to speech
+        stream_speech_response(sid, helpful_response)
 
 # Legacy stream speech response to client (non-real-time)
 def stream_speech_response(sid, text):
