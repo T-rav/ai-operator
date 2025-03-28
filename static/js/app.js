@@ -44,6 +44,8 @@ function initializeSocket() {
     socket.on('partial_transcript', handlePartialTranscript);
     socket.on('streaming_response', handleStreamingResponse);
     socket.on('streaming_audio', handleStreamingAudio);
+    
+
 }
 
 // Initialize Jitsi Meet API
@@ -268,7 +270,15 @@ function setupAudioCapture() {
     }
     
     // Get the local audio stream from Jitsi Meet
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    navigator.mediaDevices.getUserMedia({ 
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000 // Optimized for speech recognition
+        }, 
+        video: false 
+    })
         .then(stream => {
             console.log('Got audio stream, setting up recorder...');
             mediaStream = stream;
@@ -276,8 +286,7 @@ function setupAudioCapture() {
             // Setup the audio visualizer immediately after getting the stream
             setupAudioVisualizer(stream);
             
-            // Create a media recorder to capture audio with higher quality and smaller chunks
-            // for real-time streaming - using WAV format which is directly supported by OpenAI
+            // Create a media recorder optimized for real-time streaming
             let options;
             
             // Use WebM format consistently since it's well supported by browsers and OpenAI
@@ -349,7 +358,7 @@ function setupAudioCapture() {
             
             // Start streaming audio instead of batch recording
             startAudioStreaming();
-            console.log('Started audio streaming');
+            console.log('Started real-time audio streaming');
         })
         .catch(error => {
             console.error('Error accessing microphone:', error);
@@ -592,11 +601,11 @@ function startAudioStreaming() {
         isStreamingAudio = true;
         isRecording = true;
         
-        // Use a shorter timeslice (100ms) to get more frequent ondataavailable events
-        // This allows for more real-time streaming
-        mediaRecorder.start(100);
+        // Use a shorter timeslice (50ms) to get more frequent ondataavailable events
+        // This allows for more real-time streaming with lower latency
+        mediaRecorder.start(50);
         
-        // Set a longer timeout for streaming mode (10 seconds)
+        // Set a longer timeout for streaming mode (30 seconds)
         // This gives more time for natural conversation pauses
         clearTimeout(streamingInterval);
         streamingInterval = setTimeout(() => {
@@ -605,7 +614,7 @@ function startAudioStreaming() {
                 mediaRecorder.stop();
                 isRecording = false;
             }
-        }, 10000);
+        }, 30000);
     }
 }
 
@@ -645,7 +654,11 @@ function sendAudioChunkToServer(audioChunk) {
                 data: base64Audio,
                 format: audioChunk.type || 'audio/webm' // Include the MIME type
             });
-            console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
+            
+            // Log less frequently to reduce console spam
+            if (Math.random() < 0.1) { // Only log about 10% of chunks
+                console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
+            }
         };
         reader.readAsDataURL(audioChunk);
     }
@@ -781,7 +794,7 @@ function handleStreamingResponse(data) {
     }
 }
 
-// Handle streaming audio from the server
+// Handle streaming audio from the server (legacy non-real-time method)
 function handleStreamingAudio(data) {
     console.log('Received streaming audio chunk:', data.chunk_index, 'of', data.total_chunks, 'is_final:', data.is_final);
     const { audio, chunk_index, total_chunks, is_final } = data;
@@ -804,6 +817,8 @@ function handleStreamingAudio(data) {
         playNextAudioChunk();
     }
 }
+
+
 
 // Play the next audio chunk in the queue
 function playNextAudioChunk() {

@@ -1,6 +1,5 @@
 import os
 import json
-import asyncio
 import logging
 import time
 import requests
@@ -44,6 +43,9 @@ conversation_history = [
 # Streaming session management
 active_streaming_sessions = {}
 
+# Audio processing queue
+audio_processing_queue = queue.Queue(maxsize=100)
+
 # Create a Socket.IO server
 sio = socketio.Server(cors_allowed_origins='*')
 app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
@@ -75,22 +77,21 @@ def process_audio_chunk(sid, audio_chunk):
         session['buffer'] += audio_bytes
         session['last_activity'] = time.time()
         
-        # Check if we have enough audio data to process (at least 0.5 seconds)
+        # Check if we have enough audio data to process (at least 0.2 seconds)
         # For real-time streaming, we want to process smaller chunks
-        if len(session['buffer']) > 8000:  # Approximate size for 0.5s of audio
+        if len(session['buffer']) > 3200:  # Smaller buffer size for lower latency
             # Log the size of the audio buffer for debugging
             logger.info(f"Audio buffer size: {len(session['buffer'])} bytes")
             
             # Get format information from the session
             format_info = session.get('audio_format', '')
-            logger.info(f"Using format from session: {format_info}")
+            logger.debug(f"Using format from session: {format_info}")
             
             # Create a file-like object directly from the buffer
             # Use WebM format consistently since that's what the browser is sending
             audio_file = io.BytesIO(session['buffer'])
             audio_file.name = 'audio.webm'
 
-            
             # Transcribe the audio chunk
             try:
                 transcript_response = openai.audio.transcriptions.create(
@@ -124,8 +125,8 @@ def process_audio_chunk(sid, audio_chunk):
                         session['is_speaking'] = False
                 else:
                     # No speech detected in this chunk
-                    if session['is_speaking'] and time.time() - session['last_activity'] > 1.5:
-                        # If we were speaking but have silence for 1.5 seconds, end the message
+                    if session['is_speaking'] and time.time() - session['last_activity'] > 1.0:  # Reduced silence threshold
+                        # If we were speaking but have silence for 1.0 seconds, end the message
                         if session['current_message']:
                             process_complete_message(sid, session['current_message'])
                             session['current_message'] = ''
@@ -197,7 +198,7 @@ def process_complete_message(sid, message):
             'audio': None
         }, room=sid)
 
-# Stream speech response to client
+# Legacy stream speech response to client (non-real-time)
 def stream_speech_response(sid, text):
     try:
         # For longer responses, we might want to split them into smaller chunks
@@ -228,6 +229,56 @@ def stream_speech_response(sid, text):
                 model=voice_model,
                 voice=voice_voice,
                 input=chunk
+            )
+            
+            # Get the speech content as bytes and convert to base64
+            speech_bytes = speech_response.content
+            speech_base64 = base64.b64encode(speech_bytes).decode('utf-8')
+            
+            # Stream the audio chunk to the client
+            sio.emit('streaming_audio', {
+                'audio': speech_base64,
+                'chunk_index': i,
+                'total_chunks': len(chunks),
+                'is_final': i == len(chunks) - 1
+            }, room=sid)
+            
+    except Exception as e:
+        logger.error(f"Error streaming speech response: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+# Enhanced stream speech response to client with faster processing
+def stream_speech_response(sid, text):
+    try:
+        # For longer responses, split them into smaller chunks for faster streaming
+        max_chunk_length = 50  # Smaller chunks for faster response
+        
+        if len(text) <= max_chunk_length:
+            chunks = [text]
+        else:
+            # Split by sentences for more natural speech
+            chunks = []
+            current_chunk = ""
+            
+            for sentence in text.replace('. ', '.|').replace('? ', '?|').replace('! ', '!|').split('|'):
+                if len(current_chunk) + len(sentence) <= max_chunk_length:
+                    current_chunk += sentence + ('' if sentence.endswith(('.', '?', '!')) else '. ')
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk)
+                    current_chunk = sentence + ('' if sentence.endswith(('.', '?', '!')) else '. ')
+            
+            if current_chunk:
+                chunks.append(current_chunk)
+        
+        # Process each chunk and stream the audio
+        for i, chunk in enumerate(chunks):
+            speech_response = openai.audio.speech.create(
+                model=voice_model,
+                voice=voice_voice,
+                input=chunk,
+                speed=1.1  # Slightly faster speech for better responsiveness
             )
             
             # Get the speech content as bytes and convert to base64
@@ -310,7 +361,7 @@ def end_audio_stream(sid):
     
     # Process any remaining audio in the buffer
     if sid in active_streaming_sessions and active_streaming_sessions[sid]['current_message']:
-        eventlet.spawn(process_complete_message, sid, active_streaming_sessions[sid]['current_message'])
+        process_complete_message(sid, active_streaming_sessions[sid]['current_message'])
         active_streaming_sessions[sid]['current_message'] = ''
         active_streaming_sessions[sid]['is_speaking'] = False
 
