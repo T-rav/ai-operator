@@ -94,12 +94,40 @@ def process_audio_chunk(sid, audio_chunk):
 
             # Transcribe the audio chunk
             try:
-                transcript_response = openai.audio.transcriptions.create(
-                    model=speech_model,
-                    file=audio_file
-                )
+                # Save buffer to a temporary file
+                temp_file_path = f"/tmp/audio_{sid}_{int(time.time())}.webm"
+                with open(temp_file_path, 'wb') as f:
+                    f.write(session['buffer'])
                 
-                transcript = transcript_response.text
+                # Use subprocess to call OpenAI CLI directly
+                import subprocess
+                import json
+                
+                try:
+                    # Use curl to call the OpenAI API directly
+                    cmd = [
+                        'curl', 
+                        'https://api.openai.com/v1/audio/transcriptions',
+                        '-H', f'Authorization: Bearer {openai.api_key}',
+                        '-H', 'Content-Type: multipart/form-data',
+                        '-F', f'file=@{temp_file_path}',
+                        '-F', f'model={speech_model}'
+                    ]
+                    
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    response_data = json.loads(result.stdout)
+                    transcript = response_data.get('text', '')
+                except Exception as e:
+                    logger.error(f"Error with curl transcription: {e}")
+                    transcript = ''
+                
+                # Clean up the temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+                
+                # Transcript is already set from the curl command
                 
                 if transcript.strip():
                     # We have speech, update the session
