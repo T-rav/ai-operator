@@ -44,6 +44,12 @@ function initializeSocket() {
     socket.on('partial_transcript', handlePartialTranscript);
     socket.on('streaming_response', handleStreamingResponse);
     socket.on('streaming_audio', handleStreamingAudio);
+    
+    // Audio visualization data handler
+    socket.on('audio_data', handleAudioData);
+    
+    // Welcome message handler
+    socket.on('welcome_message', handleWelcomeMessage);
 }
 
 // Initialize Jitsi Meet API
@@ -108,35 +114,17 @@ function initializeJitsiMeet(roomName) {
             GENERATE_ROOMNAMES_ON_WELCOME_PAGE: false,
             DISPLAY_WELCOME_PAGE_CONTENT: false,
             DISPLAY_WELCOME_PAGE_TOOLBAR_ADDITIONAL_CONTENT: false,
-        },
-        userInfo: {
-            displayName: 'User'
-        },
-        // Remove this duplicate configOverwrite as it's conflicting with the one above
-        
-        interfaceConfigOverwrite: {
-            // Empty toolbar - this effectively removes all buttons
-            TOOLBAR_BUTTONS: [],
             
-            // Hide various UI elements
-            SHOW_JITSI_WATERMARK: false,
-            SHOW_WATERMARK_FOR_GUESTS: false,
+            // Additional UI elements from second config
             DEFAULT_BACKGROUND: '#ffffff',
-            DEFAULT_REMOTE_DISPLAY_NAME: 'Participant',
-            
-            // Hide toolbar completely
             TOOLBAR_ALWAYS_VISIBLE: false,
             AUTO_HIDE_HEADER: true,
             INITIAL_TOOLBAR_TIMEOUT: 0,
             TOOLBAR_TIMEOUT: 0,
             HIDE_INVITE_MORE_HEADER: true,
-            
-            // Hide authentication-related UI elements
             SETTINGS_SECTIONS: [],
             SHOW_PROMOTIONAL_CLOSE_PAGE: false,
-            AUTHENTICATION_ENABLE: false,
-            GENERATE_ROOMNAMES_ON_WELCOME_PAGE: false,
-            DISABLE_JOIN_LEAVE_NOTIFICATIONS: true
+            AUTHENTICATION_ENABLE: false
         },
         userInfo: {
             displayName: 'User'
@@ -268,7 +256,15 @@ function setupAudioCapture() {
     }
     
     // Get the local audio stream from Jitsi Meet
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    navigator.mediaDevices.getUserMedia({ 
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000 // Optimized for speech recognition
+        }, 
+        video: false 
+    })
         .then(stream => {
             console.log('Got audio stream, setting up recorder...');
             mediaStream = stream;
@@ -276,8 +272,7 @@ function setupAudioCapture() {
             // Setup the audio visualizer immediately after getting the stream
             setupAudioVisualizer(stream);
             
-            // Create a media recorder to capture audio with higher quality and smaller chunks
-            // for real-time streaming - using WAV format which is directly supported by OpenAI
+            // Create a media recorder optimized for real-time streaming
             let options;
             
             // Use WebM format consistently since it's well supported by browsers and OpenAI
@@ -349,7 +344,7 @@ function setupAudioCapture() {
             
             // Start streaming audio instead of batch recording
             startAudioStreaming();
-            console.log('Started audio streaming');
+            console.log('Started real-time audio streaming');
         })
         .catch(error => {
             console.error('Error accessing microphone:', error);
@@ -592,11 +587,11 @@ function startAudioStreaming() {
         isStreamingAudio = true;
         isRecording = true;
         
-        // Use a shorter timeslice (100ms) to get more frequent ondataavailable events
-        // This allows for more real-time streaming
-        mediaRecorder.start(100);
+        // Use a shorter timeslice (50ms) to get more frequent ondataavailable events
+        // This allows for more real-time streaming with lower latency
+        mediaRecorder.start(50);
         
-        // Set a longer timeout for streaming mode (10 seconds)
+        // Set a longer timeout for streaming mode (30 seconds)
         // This gives more time for natural conversation pauses
         clearTimeout(streamingInterval);
         streamingInterval = setTimeout(() => {
@@ -605,7 +600,7 @@ function startAudioStreaming() {
                 mediaRecorder.stop();
                 isRecording = false;
             }
-        }, 10000);
+        }, 30000);
     }
 }
 
@@ -645,7 +640,11 @@ function sendAudioChunkToServer(audioChunk) {
                 data: base64Audio,
                 format: audioChunk.type || 'audio/webm' // Include the MIME type
             });
-            console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
+            
+            // Log less frequently to reduce console spam
+            if (Math.random() < 0.1) { // Only log about 10% of chunks
+                console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
+            }
         };
         reader.readAsDataURL(audioChunk);
     }
@@ -728,6 +727,72 @@ function clearPartialTranscript() {
 // Variable to store the complete AI response text
 let completeAiResponseText = '';
 
+// Handle audio data for visualization
+function handleAudioData(data) {
+    console.log('Received audio data for visualization:', data);
+    
+    // If we don't have an audio visualizer set up yet, initialize it
+    if (!audioAnalyser || !audioContext) {
+        initializeAudioVisualizer();
+    }
+    
+    // Update the visualizer with the received data
+    if (audioAnalyser) {
+        // Create some fake frequency data based on the buffer size and speech detection
+        const bufferLength = audioAnalyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        // If speech is detected, create more active visualization
+        if (data.has_speech) {
+            // Generate more active visualization for speech
+            for (let i = 0; i < bufferLength; i++) {
+                // Create a wave-like pattern with higher values
+                dataArray[i] = 50 + Math.floor(Math.sin(i / 2) * 50 + Math.random() * 50);
+            }
+        } else {
+            // Generate subtle background noise for silence
+            for (let i = 0; i < bufferLength; i++) {
+                dataArray[i] = Math.floor(Math.random() * 20);
+            }
+        }
+        
+        // Override the analyzer's getByteFrequencyData method temporarily
+        const originalMethod = audioAnalyser.getByteFrequencyData;
+        audioAnalyser.getByteFrequencyData = function(array) {
+            array.set(dataArray);
+            
+            // Restore the original method after a short delay
+            setTimeout(() => {
+                audioAnalyser.getByteFrequencyData = originalMethod;
+            }, 100);
+        };
+    }
+}
+
+// Handle welcome message from the server
+function handleWelcomeMessage(data) {
+    console.log('Received welcome message:', data.text);
+    
+    // Add the welcome message to the transcript
+    addMessageToTranscript('AI', data.text, 'ai');
+    
+    // Make sure audio is initialized and ready
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext.resume().then(() => {
+                console.log('Audio context resumed for welcome message');
+            });
+        } catch (e) {
+            console.error('Failed to create audio context for welcome message:', e);
+        }
+    } else {
+        audioContext.resume().then(() => {
+            console.log('Existing audio context resumed for welcome message');
+        });
+    }
+}
+
 // Handle streaming text response from the server
 function handleStreamingResponse(data) {
     console.log('Received streaming response:', data);
@@ -781,7 +846,7 @@ function handleStreamingResponse(data) {
     }
 }
 
-// Handle streaming audio from the server
+// Handle streaming audio from the server (legacy non-real-time method)
 function handleStreamingAudio(data) {
     console.log('Received streaming audio chunk:', data.chunk_index, 'of', data.total_chunks, 'is_final:', data.is_final);
     const { audio, chunk_index, total_chunks, is_final } = data;
@@ -799,11 +864,16 @@ function handleStreamingAudio(data) {
         isFinal: is_final
     });
     
+    // Log that we received audio for playback
+    console.log('Preparing to play audio chunk:', chunk_index, 'of', total_chunks);
+    
     // Start playing if not already playing
     if (!isPlayingAudio) {
         playNextAudioChunk();
     }
 }
+
+
 
 // Play the next audio chunk in the queue
 function playNextAudioChunk() {
@@ -860,13 +930,16 @@ function playNextAudioChunk() {
                 streamingElement.remove();
             } else {
                 console.error('No content element found in streaming response');
-                // If there's no content, use a more informative fallback message
-                addMessageToTranscript('AI Operator', 'I heard you, but I couldn\'t generate a proper response.', 'ai');
+                // Only add a fallback message if this isn't the welcome message
+                const messages = document.querySelectorAll('.message.ai');
+                if (messages.length > 1) { // If we already have at least one AI message (welcome message)
+                    addMessageToTranscript('AI Operator', 'I heard you, but I need more information to respond properly.', 'ai');
+                }
             }
         } else {
-            console.error('No streaming response element found for final audio chunk');
-            // If there's no streaming element, create a fallback message
-            addMessageToTranscript('AI Operator', 'I heard you, but I couldn\'t generate a proper response.', 'ai');
+            console.log('No streaming response element found for final audio chunk');
+            // Don't add a fallback message here - it's likely the welcome message or another valid response
+            // that doesn't have a streaming element yet
         }
     }
     

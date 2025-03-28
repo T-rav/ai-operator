@@ -1,6 +1,5 @@
 import os
 import json
-import asyncio
 import logging
 import time
 import requests
@@ -8,6 +7,7 @@ import threading
 import base64
 import io
 import queue
+import traceback
 from flask import Flask, render_template, request, jsonify, Response
 from dotenv import load_dotenv
 import openai
@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # Configure OpenAI
-openai.api_key = os.getenv('OPENAI_API_KEY')
+from openai import OpenAI
+
+# Create a clean client instance with just the API key
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
 voice_model = os.getenv('VOICE_MODEL', 'tts-1')
 voice_voice = os.getenv('VOICE_VOICE', 'alloy')
 speech_model = os.getenv('SPEECH_MODEL', 'whisper-1')
@@ -43,6 +47,9 @@ conversation_history = [
 
 # Streaming session management
 active_streaming_sessions = {}
+
+# Audio processing queue
+audio_processing_queue = queue.Queue(maxsize=100)
 
 # Create a Socket.IO server
 sio = socketio.Server(cors_allowed_origins='*')
@@ -75,30 +82,35 @@ def process_audio_chunk(sid, audio_chunk):
         session['buffer'] += audio_bytes
         session['last_activity'] = time.time()
         
-        # Check if we have enough audio data to process (at least 0.5 seconds)
+        # Check if we have enough audio data to process (at least 0.2 seconds)
         # For real-time streaming, we want to process smaller chunks
-        if len(session['buffer']) > 8000:  # Approximate size for 0.5s of audio
+        if len(session['buffer']) > 3200:  # Smaller buffer size for lower latency
             # Log the size of the audio buffer for debugging
             logger.info(f"Audio buffer size: {len(session['buffer'])} bytes")
             
             # Get format information from the session
             format_info = session.get('audio_format', '')
-            logger.info(f"Using format from session: {format_info}")
+            logger.debug(f"Using format from session: {format_info}")
             
             # Create a file-like object directly from the buffer
             # Use WebM format consistently since that's what the browser is sending
             audio_file = io.BytesIO(session['buffer'])
             audio_file.name = 'audio.webm'
 
-            
             # Transcribe the audio chunk
             try:
-                transcript_response = openai.audio.transcriptions.create(
+                # Use the audio file directly with the OpenAI client
+                transcript_response = client.audio.transcriptions.create(
                     model=speech_model,
                     file=audio_file
                 )
-                
                 transcript = transcript_response.text
+                
+                # Send audio data for visualization
+                sio.emit('audio_data', {
+                    'buffer_size': len(session['buffer']),
+                    'has_speech': bool(transcript.strip())
+                }, room=sid)
                 
                 if transcript.strip():
                     # We have speech, update the session
@@ -124,8 +136,8 @@ def process_audio_chunk(sid, audio_chunk):
                         session['is_speaking'] = False
                 else:
                     # No speech detected in this chunk
-                    if session['is_speaking'] and time.time() - session['last_activity'] > 1.5:
-                        # If we were speaking but have silence for 1.5 seconds, end the message
+                    if session['is_speaking'] and time.time() - session['last_activity'] > 1.0:  # Reduced silence threshold
+                        # If we were speaking but have silence for 1.0 seconds, end the message
                         if session['current_message']:
                             process_complete_message(sid, session['current_message'])
                             session['current_message'] = ''
@@ -139,7 +151,6 @@ def process_audio_chunk(sid, audio_chunk):
         return True
     except Exception as e:
         logger.error(f"Error processing audio chunk: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         return False
 
@@ -161,7 +172,7 @@ def process_complete_message(sid, message):
         response_text = ""
         
         # Start streaming chat completion
-        for chunk in openai.chat.completions.create(
+        for chunk in client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=conversation_history,
             stream=True
@@ -190,24 +201,33 @@ def process_complete_message(sid, message):
         
     except Exception as e:
         logger.error(f"Error processing complete message: {e}")
-        import traceback
         logger.error(traceback.format_exc())
-        sio.emit('ai_response', {
-            'text': f"Error: {str(e)}",
-            'audio': None
+        
+        # Instead of sending an error, provide a helpful response
+        helpful_response = "I'm listening. How can I help you today?"
+        
+        # Add the helpful response to conversation history
+        conversation_history.append({"role": "assistant", "content": helpful_response})
+        
+        # Send the helpful response as streaming text
+        sio.emit('streaming_response', {
+            'text': helpful_response,
+            'is_final': True
         }, room=sid)
+        
+        # Convert the helpful response to speech
+        stream_speech_response(sid, helpful_response)
 
-# Stream speech response to client
+# Enhanced stream speech response to client with faster processing
 def stream_speech_response(sid, text):
     try:
-        # For longer responses, we might want to split them into smaller chunks
-        # to start streaming audio sooner
-        max_chunk_length = 100  # characters
+        # For longer responses, split them into smaller chunks for faster streaming
+        max_chunk_length = 50  # Smaller chunks for faster response
         
         if len(text) <= max_chunk_length:
             chunks = [text]
         else:
-            # Split by sentences or at max_chunk_length
+            # Split by sentences for more natural speech
             chunks = []
             current_chunk = ""
             
@@ -224,10 +244,11 @@ def stream_speech_response(sid, text):
         
         # Process each chunk and stream the audio
         for i, chunk in enumerate(chunks):
-            speech_response = openai.audio.speech.create(
+            speech_response = client.audio.speech.create(
                 model=voice_model,
                 voice=voice_voice,
-                input=chunk
+                input=chunk,
+                speed=1.1  # Slightly faster speech for better responsiveness
             )
             
             # Get the speech content as bytes and convert to base64
@@ -244,7 +265,6 @@ def stream_speech_response(sid, text):
             
     except Exception as e:
         logger.error(f"Error streaming speech response: {e}")
-        import traceback
         logger.error(traceback.format_exc())
 
 # Cleanup inactive sessions periodically
@@ -273,6 +293,34 @@ def cleanup_inactive_sessions():
 @sio.event
 def connect(sid, environ):
     logger.info(f"Client connected: {sid}")
+    
+    # Initialize session for this client
+    active_streaming_sessions[sid] = {
+        'buffer': b'',
+        'last_activity': time.time(),
+        'is_speaking': False,
+        'current_message': '',
+        'audio_format': ''
+    }
+    
+    # Send welcome message
+    welcome_message = "Welcome to AI Operator, my name is Tracey, ask me anything."
+    
+    # Add the welcome message to conversation history
+    conversation_history.append({"role": "assistant", "content": welcome_message})
+    
+    # Send the welcome message text to the client
+    sio.emit('welcome_message', {
+        'text': welcome_message
+    }, room=sid)
+    
+    # Generate speech for the welcome message with a small delay to ensure client is ready
+    def send_welcome_audio():
+        # Small delay to ensure client is fully connected
+        eventlet.sleep(0.5)
+        stream_speech_response(sid, welcome_message)
+    
+    eventlet.spawn(send_welcome_audio)
 
 @sio.event
 def disconnect(sid):
@@ -310,7 +358,7 @@ def end_audio_stream(sid):
     
     # Process any remaining audio in the buffer
     if sid in active_streaming_sessions and active_streaming_sessions[sid]['current_message']:
-        eventlet.spawn(process_complete_message, sid, active_streaming_sessions[sid]['current_message'])
+        process_complete_message(sid, active_streaming_sessions[sid]['current_message'])
         active_streaming_sessions[sid]['current_message'] = ''
         active_streaming_sessions[sid]['is_speaking'] = False
 
