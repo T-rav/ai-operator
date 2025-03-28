@@ -47,6 +47,9 @@ function initializeSocket() {
     
     // Audio visualization data handler
     socket.on('audio_data', handleAudioData);
+    
+    // Welcome message handler
+    socket.on('welcome_message', handleWelcomeMessage);
 }
 
 // Initialize Jitsi Meet API
@@ -784,6 +787,30 @@ function handleAudioData(data) {
     }
 }
 
+// Handle welcome message from the server
+function handleWelcomeMessage(data) {
+    console.log('Received welcome message:', data.text);
+    
+    // Add the welcome message to the transcript
+    addMessageToTranscript('AI', data.text, 'ai');
+    
+    // Make sure audio is initialized and ready
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext.resume().then(() => {
+                console.log('Audio context resumed for welcome message');
+            });
+        } catch (e) {
+            console.error('Failed to create audio context for welcome message:', e);
+        }
+    } else {
+        audioContext.resume().then(() => {
+            console.log('Existing audio context resumed for welcome message');
+        });
+    }
+}
+
 // Handle streaming text response from the server
 function handleStreamingResponse(data) {
     console.log('Received streaming response:', data);
@@ -854,6 +881,9 @@ function handleStreamingAudio(data) {
         total: total_chunks,
         isFinal: is_final
     });
+    
+    // Log that we received audio for playback
+    console.log('Preparing to play audio chunk:', chunk_index, 'of', total_chunks);
     
     // Start playing if not already playing
     if (!isPlayingAudio) {

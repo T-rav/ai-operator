@@ -334,6 +334,34 @@ def cleanup_inactive_sessions():
 @sio.event
 def connect(sid, environ):
     logger.info(f"Client connected: {sid}")
+    
+    # Initialize session for this client
+    active_streaming_sessions[sid] = {
+        'buffer': b'',
+        'last_activity': time.time(),
+        'is_speaking': False,
+        'current_message': '',
+        'audio_format': ''
+    }
+    
+    # Send welcome message
+    welcome_message = "Welcome to AI Operator, my name is Tracey, ask me anything."
+    
+    # Add the welcome message to conversation history
+    conversation_history.append({"role": "assistant", "content": welcome_message})
+    
+    # Send the welcome message text to the client
+    sio.emit('welcome_message', {
+        'text': welcome_message
+    }, room=sid)
+    
+    # Generate speech for the welcome message with a small delay to ensure client is ready
+    def send_welcome_audio():
+        # Small delay to ensure client is fully connected
+        eventlet.sleep(0.5)
+        stream_speech_response(sid, welcome_message)
+    
+    eventlet.spawn(send_welcome_audio)
 
 @sio.event
 def disconnect(sid):
