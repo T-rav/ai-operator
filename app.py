@@ -25,7 +25,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # Configure OpenAI
-openai.api_key = os.getenv('OPENAI_API_KEY')
+from openai import OpenAI
+
+# Create a clean client instance with just the API key
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
 voice_model = os.getenv('VOICE_MODEL', 'tts-1')
 voice_voice = os.getenv('VOICE_VOICE', 'alloy')
 speech_model = os.getenv('SPEECH_MODEL', 'whisper-1')
@@ -87,47 +91,44 @@ def process_audio_chunk(sid, audio_chunk):
             format_info = session.get('audio_format', '')
             logger.debug(f"Using format from session: {format_info}")
             
-            # Create a file-like object directly from the buffer
-            # Use WebM format consistently since that's what the browser is sending
-            audio_file = io.BytesIO(session['buffer'])
-            audio_file.name = 'audio.webm'
-
-            # Transcribe the audio chunk
+            # Process the audio data directly
             try:
-                # Save buffer to a temporary file
-                temp_file_path = f"/tmp/audio_{sid}_{int(time.time())}.webm"
-                with open(temp_file_path, 'wb') as f:
-                    f.write(session['buffer'])
-                
-                # Use subprocess to call OpenAI CLI directly
+                # Convert the WebM audio to WAV format which is more reliable with OpenAI
+                import tempfile
                 import subprocess
-                import json
                 
+                # Create temporary files for conversion
+                with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as webm_file:
+                    webm_path = webm_file.name
+                    webm_file.write(session['buffer'])
+                
+                wav_path = webm_path.replace('.webm', '.wav')
+                
+                # Use ffmpeg to convert WebM to WAV
                 try:
-                    # Use curl to call the OpenAI API directly
-                    cmd = [
-                        'curl', 
-                        'https://api.openai.com/v1/audio/transcriptions',
-                        '-H', f'Authorization: Bearer {openai.api_key}',
-                        '-H', 'Content-Type: multipart/form-data',
-                        '-F', f'file=@{temp_file_path}',
-                        '-F', f'model={speech_model}'
-                    ]
+                    subprocess.run(
+                        ['ffmpeg', '-i', webm_path, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav_path],
+                        check=True, capture_output=True
+                    )
                     
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    response_data = json.loads(result.stdout)
-                    transcript = response_data.get('text', '')
-                except Exception as e:
-                    logger.error(f"Error with curl transcription: {e}")
+                    # Now use the WAV file with OpenAI
+                    with open(wav_path, 'rb') as wav_file:
+                        transcript_response = client.audio.transcriptions.create(
+                            model=speech_model,
+                            file=wav_file
+                        )
+                        transcript = transcript_response.text
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"FFmpeg conversion error: {e.stderr}")
                     transcript = ''
-                
-                # Clean up the temporary file
-                try:
-                    os.unlink(temp_file_path)
-                except:
-                    pass
-                
-                # Transcript is already set from the curl command
+                finally:
+                    # Clean up temp files
+                    try:
+                        os.unlink(webm_path)
+                        if os.path.exists(wav_path):
+                            os.unlink(wav_path)
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up temp files: {cleanup_error}")
                 
                 if transcript.strip():
                     # We have speech, update the session
@@ -190,7 +191,7 @@ def process_complete_message(sid, message):
         response_text = ""
         
         # Start streaming chat completion
-        for chunk in openai.chat.completions.create(
+        for chunk in client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=conversation_history,
             stream=True
@@ -302,7 +303,7 @@ def stream_speech_response(sid, text):
         
         # Process each chunk and stream the audio
         for i, chunk in enumerate(chunks):
-            speech_response = openai.audio.speech.create(
+            speech_response = client.audio.speech.create(
                 model=voice_model,
                 voice=voice_voice,
                 input=chunk,
