@@ -7,6 +7,7 @@ import threading
 import base64
 import io
 import queue
+import traceback
 from flask import Flask, render_template, request, jsonify, Response
 from dotenv import load_dotenv
 import openai
@@ -150,7 +151,6 @@ def process_audio_chunk(sid, audio_chunk):
         return True
     except Exception as e:
         logger.error(f"Error processing audio chunk: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         return False
 
@@ -201,7 +201,6 @@ def process_complete_message(sid, message):
         
     except Exception as e:
         logger.error(f"Error processing complete message: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         
         # Instead of sending an error, provide a helpful response
@@ -266,7 +265,6 @@ def stream_speech_response(sid, text):
             
     except Exception as e:
         logger.error(f"Error streaming speech response: {e}")
-        import traceback
         logger.error(traceback.format_exc())
 
 # Cleanup inactive sessions periodically

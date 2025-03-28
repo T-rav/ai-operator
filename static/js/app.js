@@ -114,35 +114,17 @@ function initializeJitsiMeet(roomName) {
             GENERATE_ROOMNAMES_ON_WELCOME_PAGE: false,
             DISPLAY_WELCOME_PAGE_CONTENT: false,
             DISPLAY_WELCOME_PAGE_TOOLBAR_ADDITIONAL_CONTENT: false,
-        },
-        userInfo: {
-            displayName: 'User'
-        },
-        // Remove this duplicate configOverwrite as it's conflicting with the one above
-        
-        interfaceConfigOverwrite: {
-            // Empty toolbar - this effectively removes all buttons
-            TOOLBAR_BUTTONS: [],
             
-            // Hide various UI elements
-            SHOW_JITSI_WATERMARK: false,
-            SHOW_WATERMARK_FOR_GUESTS: false,
+            // Additional UI elements from second config
             DEFAULT_BACKGROUND: '#ffffff',
-            DEFAULT_REMOTE_DISPLAY_NAME: 'Participant',
-            
-            // Hide toolbar completely
             TOOLBAR_ALWAYS_VISIBLE: false,
             AUTO_HIDE_HEADER: true,
             INITIAL_TOOLBAR_TIMEOUT: 0,
             TOOLBAR_TIMEOUT: 0,
             HIDE_INVITE_MORE_HEADER: true,
-            
-            // Hide authentication-related UI elements
             SETTINGS_SECTIONS: [],
             SHOW_PROMOTIONAL_CLOSE_PAGE: false,
-            AUTHENTICATION_ENABLE: false,
-            GENERATE_ROOMNAMES_ON_WELCOME_PAGE: false,
-            DISABLE_JOIN_LEAVE_NOTIFICATIONS: true
+            AUTHENTICATION_ENABLE: false
         },
         userInfo: {
             displayName: 'User'
