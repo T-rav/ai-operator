@@ -45,7 +45,8 @@ function initializeSocket() {
     socket.on('streaming_response', handleStreamingResponse);
     socket.on('streaming_audio', handleStreamingAudio);
     
-
+    // Audio visualization data handler
+    socket.on('audio_data', handleAudioData);
 }
 
 // Initialize Jitsi Meet API
@@ -740,6 +741,48 @@ function clearPartialTranscript() {
 
 // Variable to store the complete AI response text
 let completeAiResponseText = '';
+
+// Handle audio data for visualization
+function handleAudioData(data) {
+    console.log('Received audio data for visualization:', data);
+    
+    // If we don't have an audio visualizer set up yet, initialize it
+    if (!audioAnalyser || !audioContext) {
+        initializeAudioVisualizer();
+    }
+    
+    // Update the visualizer with the received data
+    if (audioAnalyser) {
+        // Create some fake frequency data based on the buffer size and speech detection
+        const bufferLength = audioAnalyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        // If speech is detected, create more active visualization
+        if (data.has_speech) {
+            // Generate more active visualization for speech
+            for (let i = 0; i < bufferLength; i++) {
+                // Create a wave-like pattern with higher values
+                dataArray[i] = 50 + Math.floor(Math.sin(i / 2) * 50 + Math.random() * 50);
+            }
+        } else {
+            // Generate subtle background noise for silence
+            for (let i = 0; i < bufferLength; i++) {
+                dataArray[i] = Math.floor(Math.random() * 20);
+            }
+        }
+        
+        // Override the analyzer's getByteFrequencyData method temporarily
+        const originalMethod = audioAnalyser.getByteFrequencyData;
+        audioAnalyser.getByteFrequencyData = function(array) {
+            array.set(dataArray);
+            
+            // Restore the original method after a short delay
+            setTimeout(() => {
+                audioAnalyser.getByteFrequencyData = originalMethod;
+            }, 100);
+        };
+    }
+}
 
 // Handle streaming text response from the server
 function handleStreamingResponse(data) {

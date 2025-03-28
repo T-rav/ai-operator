@@ -91,44 +91,25 @@ def process_audio_chunk(sid, audio_chunk):
             format_info = session.get('audio_format', '')
             logger.debug(f"Using format from session: {format_info}")
             
-            # Process the audio data directly
+            # Create a file-like object directly from the buffer
+            # Use WebM format consistently since that's what the browser is sending
+            audio_file = io.BytesIO(session['buffer'])
+            audio_file.name = 'audio.webm'
+
+            # Transcribe the audio chunk
             try:
-                # Convert the WebM audio to WAV format which is more reliable with OpenAI
-                import tempfile
-                import subprocess
+                # Use the audio file directly with the OpenAI client
+                transcript_response = client.audio.transcriptions.create(
+                    model=speech_model,
+                    file=audio_file
+                )
+                transcript = transcript_response.text
                 
-                # Create temporary files for conversion
-                with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as webm_file:
-                    webm_path = webm_file.name
-                    webm_file.write(session['buffer'])
-                
-                wav_path = webm_path.replace('.webm', '.wav')
-                
-                # Use ffmpeg to convert WebM to WAV
-                try:
-                    subprocess.run(
-                        ['ffmpeg', '-i', webm_path, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav_path],
-                        check=True, capture_output=True
-                    )
-                    
-                    # Now use the WAV file with OpenAI
-                    with open(wav_path, 'rb') as wav_file:
-                        transcript_response = client.audio.transcriptions.create(
-                            model=speech_model,
-                            file=wav_file
-                        )
-                        transcript = transcript_response.text
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"FFmpeg conversion error: {e.stderr}")
-                    transcript = ''
-                finally:
-                    # Clean up temp files
-                    try:
-                        os.unlink(webm_path)
-                        if os.path.exists(wav_path):
-                            os.unlink(wav_path)
-                    except Exception as cleanup_error:
-                        logger.error(f"Error cleaning up temp files: {cleanup_error}")
+                # Send audio data for visualization
+                sio.emit('audio_data', {
+                    'buffer_size': len(session['buffer']),
+                    'has_speech': bool(transcript.strip())
+                }, room=sid)
                 
                 if transcript.strip():
                     # We have speech, update the session
