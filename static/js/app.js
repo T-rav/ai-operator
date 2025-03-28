@@ -948,13 +948,16 @@ function playNextAudioChunk() {
                 streamingElement.remove();
             } else {
                 console.error('No content element found in streaming response');
-                // If there's no content, use a more informative fallback message
-                addMessageToTranscript('AI Operator', 'I heard you, but I couldn\'t generate a proper response.', 'ai');
+                // Only add a fallback message if this isn't the welcome message
+                const messages = document.querySelectorAll('.message.ai');
+                if (messages.length > 1) { // If we already have at least one AI message (welcome message)
+                    addMessageToTranscript('AI Operator', 'I heard you, but I need more information to respond properly.', 'ai');
+                }
             }
         } else {
-            console.error('No streaming response element found for final audio chunk');
-            // If there's no streaming element, create a fallback message
-            addMessageToTranscript('AI Operator', 'I heard you, but I couldn\'t generate a proper response.', 'ai');
+            console.log('No streaming response element found for final audio chunk');
+            // Don't add a fallback message here - it's likely the welcome message or another valid response
+            // that doesn't have a streaming element yet
         }
     }
     
