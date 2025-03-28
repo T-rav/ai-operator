@@ -219,56 +219,6 @@ def process_complete_message(sid, message):
         # Convert the helpful response to speech
         stream_speech_response(sid, helpful_response)
 
-# Legacy stream speech response to client (non-real-time)
-def stream_speech_response(sid, text):
-    try:
-        # For longer responses, we might want to split them into smaller chunks
-        # to start streaming audio sooner
-        max_chunk_length = 100  # characters
-        
-        if len(text) <= max_chunk_length:
-            chunks = [text]
-        else:
-            # Split by sentences or at max_chunk_length
-            chunks = []
-            current_chunk = ""
-            
-            for sentence in text.replace('. ', '.|').replace('? ', '?|').replace('! ', '!|').split('|'):
-                if len(current_chunk) + len(sentence) <= max_chunk_length:
-                    current_chunk += sentence + ('' if sentence.endswith(('.', '?', '!')) else '. ')
-                else:
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                    current_chunk = sentence + ('' if sentence.endswith(('.', '?', '!')) else '. ')
-            
-            if current_chunk:
-                chunks.append(current_chunk)
-        
-        # Process each chunk and stream the audio
-        for i, chunk in enumerate(chunks):
-            speech_response = openai.audio.speech.create(
-                model=voice_model,
-                voice=voice_voice,
-                input=chunk
-            )
-            
-            # Get the speech content as bytes and convert to base64
-            speech_bytes = speech_response.content
-            speech_base64 = base64.b64encode(speech_bytes).decode('utf-8')
-            
-            # Stream the audio chunk to the client
-            sio.emit('streaming_audio', {
-                'audio': speech_base64,
-                'chunk_index': i,
-                'total_chunks': len(chunks),
-                'is_final': i == len(chunks) - 1
-            }, room=sid)
-            
-    except Exception as e:
-        logger.error(f"Error streaming speech response: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-
 # Enhanced stream speech response to client with faster processing
 def stream_speech_response(sid, text):
     try:
