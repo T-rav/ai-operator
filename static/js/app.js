@@ -18,13 +18,9 @@ let audioEnabled = false;
 
 // DOM elements
 const toggleMicBtn = document.getElementById('toggle-mic');
-const toggleVideoBtn = document.getElementById('toggle-video');
 const endSessionBtn = document.getElementById('end-session');
-const statusIndicator = document.getElementById('status-indicator');
-const statusText = document.getElementById('status-text');
 const transcriptContainer = document.getElementById('transcript-container');
 const audioVisualizer = document.getElementById('audio-visualizer');
-const localVideo = document.getElementById('local-video');
 
 // Initialize Socket.IO connection
 function initializeSocket() {
@@ -56,11 +52,10 @@ function initializeSocket() {
     socket.on('welcome_message', handleWelcomeMessage);
 }
 
-// Initialize media devices (camera and microphone)
+// Initialize media devices
 function initializeMediaDevices() {
-    // Set up event listeners for media control buttons
+    // Set up event listeners for control buttons
     toggleMicBtn.addEventListener('click', toggleMicrophone);
-    toggleVideoBtn.addEventListener('click', toggleVideo);
     endSessionBtn.addEventListener('click', endSession);
     
     // Disable end session button until connected
@@ -84,39 +79,19 @@ function toggleMicrophone() {
     }
 }
 
-// Toggle video on/off
-function toggleVideo() {
-    if (videoEnabled) {
-        // Turn off video
-        stopVideoCapture();
-        toggleVideoBtn.textContent = 'Start Video';
-        toggleVideoBtn.classList.remove('active');
-        videoEnabled = false;
-    } else {
-        // Turn on video
-        startVideoCapture();
-        toggleVideoBtn.textContent = 'Stop Video';
-        toggleVideoBtn.classList.add('active');
-        videoEnabled = true;
-    }
-}
+
 
 // End the current session
 function endSession() {
     // Stop all media tracks
     stopAudioCapture();
-    stopVideoCapture();
     
     // Reset UI
     toggleMicBtn.textContent = 'Start Microphone';
     toggleMicBtn.classList.remove('active');
-    toggleVideoBtn.textContent = 'Start Video';
-    toggleVideoBtn.classList.remove('active');
     
     // Update status
     audioEnabled = false;
-    videoEnabled = false;
-    updateAiStatus(false);
     
     // Disconnect socket
     if (socket) {
@@ -203,57 +178,7 @@ function stopAudioCapture() {
     }
 }
 
-// Start video capture
-function startVideoCapture() {
-    if (mediaStream && mediaStream.getVideoTracks().length > 0) {
-        // If we already have a stream with video, just enable it
-        mediaStream.getVideoTracks().forEach(track => track.enabled = true);
-        localVideo.srcObject = mediaStream;
-        return;
-    }
-    
-    // Request video access
-    navigator.mediaDevices.getUserMedia({ video: true })
-    .then(stream => {
-        // If we already have an audio stream, add the video track to it
-        if (mediaStream && mediaStream.getAudioTracks().length > 0) {
-            const audioTrack = mediaStream.getAudioTracks()[0];
-            mediaStream = new MediaStream([audioTrack, ...stream.getVideoTracks()]);
-        } else {
-            mediaStream = stream;
-        }
-        
-        localVideo.srcObject = mediaStream;
-        endSessionBtn.disabled = false;
-    })
-    .catch(error => {
-        console.error('Error accessing camera:', error);
-        addMessageToTranscript('System', 'Error accessing camera. Please check permissions.', 'system');
-        toggleVideoBtn.textContent = 'Start Video';
-        toggleVideoBtn.classList.remove('active');
-        videoEnabled = false;
-    });
-}
 
-// Stop video capture
-function stopVideoCapture() {
-    if (mediaStream) {
-        // Stop all video tracks
-        mediaStream.getVideoTracks().forEach(track => {
-            track.enabled = false;
-            track.stop();
-        });
-        
-        // If we still have audio tracks, update the stream
-        if (mediaStream.getAudioTracks().length > 0) {
-            const audioTracks = mediaStream.getAudioTracks();
-            mediaStream = new MediaStream(audioTracks);
-        }
-    }
-    
-    // Clear the video element
-    localVideo.srcObject = null;
-}
 
 // Setup audio processing for streaming to the server
 function setupAudioProcessing() {
@@ -959,23 +884,13 @@ function base64ToBlob(base64, mimeType) {
     return new Blob(byteArrays, { type: mimeType });
 }
 
-// Update AI status indicator
+// Update AI status
 function updateAiStatus(isOnline) {
     aiEnabled = isOnline;
     
-    if (isOnline) {
-        statusIndicator.classList.remove('offline');
-        statusIndicator.classList.add('online');
-        statusText.textContent = 'Online';
-    } else {
-        statusIndicator.classList.remove('online');
-        statusIndicator.classList.add('offline');
-        statusText.textContent = 'Offline';
-        
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
-            isRecording = false;
-        }
+    if (!isOnline && mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        isRecording = false;
     }
 }
 
