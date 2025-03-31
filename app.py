@@ -378,30 +378,9 @@ def connect(sid, environ):
         'is_speaking': False,
         'current_message': '',
         'audio_format': '',
-        'format_failures': 0  # Track format failures to trigger format conversion
+        'format_failures': 0,  # Track format failures to trigger format conversion
+        'session_started': False  # Track if session has been started
     }
-    
-    # Send welcome message
-    welcome_message = "Welcome to AI Operator, my name is Tracey, ask me anything."
-    
-    # Log the welcome message
-    logger.info(f"🤖 AI: {welcome_message}")
-    
-    # Add the welcome message to conversation history
-    conversation_history.append({"role": "assistant", "content": welcome_message})
-    
-    # Send the welcome message text to the client
-    sio.emit('welcome_message', {
-        'text': welcome_message
-    }, room=sid)
-    
-    # Generate speech for the welcome message with a small delay to ensure client is ready
-    def send_welcome_audio():
-        # Small delay to ensure client is fully connected
-        eventlet.sleep(0.5)
-        stream_speech_response(sid, welcome_message)
-    
-    eventlet.spawn(send_welcome_audio)
 
 @sio.event
 def disconnect(sid):
@@ -431,6 +410,36 @@ def audio_chunk(sid, data):
         logger.debug("Received legacy format audio data without format information")
         # Process the audio chunk in the background
         eventlet.spawn(process_audio_chunk, sid, data)
+
+@sio.event
+def start_session(sid):
+    """Client signals start of session"""
+    logger.info(f"Starting session for {sid}")
+    
+    if sid in active_streaming_sessions:
+        active_streaming_sessions[sid]['session_started'] = True
+        
+        # Send welcome message
+        welcome_message = "Welcome to AI Operator, my name is Tracey, ask me anything."
+        
+        # Log the welcome message
+        logger.info(f"🤖 AI: {welcome_message}")
+        
+        # Add the welcome message to conversation history
+        conversation_history.append({"role": "assistant", "content": welcome_message})
+        
+        # Send the welcome message text to the client
+        sio.emit('welcome_message', {
+            'text': welcome_message
+        }, room=sid)
+        
+        # Generate speech for the welcome message with a small delay to ensure client is ready
+        def send_welcome_audio():
+            # Small delay to ensure client is fully connected
+            eventlet.sleep(0.5)
+            stream_speech_response(sid, welcome_message)
+        
+        eventlet.spawn(send_welcome_audio)
 
 @sio.event
 def end_audio_stream(sid):

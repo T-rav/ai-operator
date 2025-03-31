@@ -67,15 +67,20 @@ function toggleMicrophone() {
     if (audioEnabled) {
         // Turn off microphone
         stopAudioCapture();
-        toggleMicBtn.textContent = 'Start Microphone';
+        toggleMicBtn.textContent = 'Start';
         toggleMicBtn.classList.remove('active');
         audioEnabled = false;
     } else {
         // Turn on microphone
         startAudioCapture();
-        toggleMicBtn.textContent = 'Stop Microphone';
+        toggleMicBtn.textContent = 'Stop';
         toggleMicBtn.classList.add('active');
         audioEnabled = true;
+        
+        // Signal to the server that the session has started
+        if (socket && socket.connected) {
+            socket.emit('start_session');
+        }
     }
 }
 
@@ -87,7 +92,7 @@ function endSession() {
     stopAudioCapture();
     
     // Reset UI
-    toggleMicBtn.textContent = 'Start Microphone';
+    toggleMicBtn.textContent = 'Start';
     toggleMicBtn.classList.remove('active');
     
     // Update status
