@@ -86,7 +86,7 @@ def process_audio_chunk(sid, audio_chunk):
         # For real-time streaming, we want to process smaller chunks
         if len(session['buffer']) > 3200:  # Smaller buffer size for lower latency
             # Log the size of the audio buffer for debugging
-            logger.info(f"Audio buffer size: {len(session['buffer'])} bytes")
+            logger.debug(f"Audio buffer size: {len(session['buffer'])} bytes")
             
             # Get format information from the session
             format_info = session.get('audio_format', '')
@@ -157,7 +157,7 @@ def process_audio_chunk(sid, audio_chunk):
 # Process a complete message and generate a streaming response
 def process_complete_message(sid, message):
     try:
-        logger.info(f"Processing complete message: {message}")
+        logger.info(f"👤 USER: {message}")
         
         # Add user message to conversation history
         conversation_history.append({"role": "user", "content": message})
@@ -187,6 +187,9 @@ def process_complete_message(sid, message):
                     'is_final': False
                 }, room=sid)
         
+        # Log the complete AI response
+        logger.info(f"🤖 AI: {response_text}")
+        
         # Add AI response to conversation history
         conversation_history.append({"role": "assistant", "content": response_text})
         
@@ -205,6 +208,9 @@ def process_complete_message(sid, message):
         
         # Instead of sending an error, provide a helpful response
         helpful_response = "I'm listening. How can I help you today?"
+        
+        # Log the helpful response
+        logger.info(f"🤖 AI: {helpful_response}")
         
         # Add the helpful response to conversation history
         conversation_history.append({"role": "assistant", "content": helpful_response})
@@ -306,6 +312,9 @@ def connect(sid, environ):
     # Send welcome message
     welcome_message = "Welcome to AI Operator, my name is Tracey, ask me anything."
     
+    # Log the welcome message
+    logger.info(f"🤖 AI: {welcome_message}")
+    
     # Add the welcome message to conversation history
     conversation_history.append({"role": "assistant", "content": welcome_message})
     
@@ -336,18 +345,18 @@ def audio_chunk(sid, data):
         # Extract the audio data and format information
         audio_base64 = data['data']
         audio_format = data.get('format', 'audio/wav')
-        logger.info(f"Audio format from client: {audio_format}")
+        logger.debug(f"Audio format from client: {audio_format}")
         
         # Store format information in the session
         if sid in active_streaming_sessions:
             active_streaming_sessions[sid]['audio_format'] = audio_format
-            logger.info(f"Set session audio format to: {audio_format}")
+            logger.debug(f"Set session audio format to: {audio_format}")
         
         # Process the audio chunk in the background
         eventlet.spawn(process_audio_chunk, sid, audio_base64)
     else:
         # Legacy format - just base64 data
-        logger.info("Received legacy format audio data without format information")
+        logger.debug("Received legacy format audio data without format information")
         # Process the audio chunk in the background
         eventlet.spawn(process_audio_chunk, sid, data)
 
