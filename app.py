@@ -2,18 +2,18 @@ import os
 import json
 import logging
 import time
-import requests
-import threading
 import base64
 import io
 import queue
 import traceback
+import tempfile
 from flask import Flask, render_template, request, jsonify, Response
 from dotenv import load_dotenv
 import openai
 import socketio
 import eventlet
 from datetime import datetime, timedelta
+from pydub import AudioSegment
 
 # Load environment variables
 load_dotenv('.env')
@@ -35,14 +35,12 @@ voice_model = os.getenv('VOICE_MODEL', 'tts-1')
 voice_voice = os.getenv('VOICE_VOICE', 'alloy')
 speech_model = os.getenv('SPEECH_MODEL', 'whisper-1')
 
-# Jitsi Meet configuration
-jitsi_server_url = os.getenv('JITSI_SERVER_URL', 'https://meet.jit.si')
-jitsi_room_name = os.getenv('JITSI_ROOM_NAME', 'ai-operator-room')
+# AI Operator configuration
 bot_display_name = os.getenv('BOT_DISPLAY_NAME', 'AI Operator')
 
 # AI conversation context
 conversation_history = [
-    {"role": "system", "content": "You are an AI operator in a voice conference. Keep your responses concise and helpful."}
+    {"role": "system", "content": "You are an AI voice assistant. Keep your responses concise and helpful."}
 ]
 
 # Streaming session management
@@ -62,10 +60,12 @@ def process_audio_chunk(sid, audio_chunk):
         if sid not in active_streaming_sessions:
             active_streaming_sessions[sid] = {
                 'buffer': b'',
+                'webm_header': None,  # Store WebM header for reuse
                 'partial_transcript': '',
                 'is_speaking': False,
                 'last_activity': time.time(),
-                'current_message': ''
+                'current_message': '',
+                'format_failures': 0  # Track format failures to trigger format conversion
             }
         
         session = active_streaming_sessions[sid]
@@ -77,6 +77,12 @@ def process_audio_chunk(sid, audio_chunk):
             audio_bytes = base64.b64decode(audio_chunk)
         else:
             audio_bytes = audio_chunk
+        
+        # If this is the first chunk with data, save it as the WebM header
+        if session['webm_header'] is None and len(audio_bytes) > 0:
+            # WebM headers are typically in the first few bytes
+            session['webm_header'] = audio_bytes
+            logger.info(f"Saved WebM header, size: {len(audio_bytes)} bytes")
             
         # Add to buffer
         session['buffer'] += audio_bytes
@@ -92,19 +98,78 @@ def process_audio_chunk(sid, audio_chunk):
             format_info = session.get('audio_format', '')
             logger.debug(f"Using format from session: {format_info}")
             
-            # Create a file-like object directly from the buffer
-            # Use WebM format consistently since that's what the browser is sending
-            audio_file = io.BytesIO(session['buffer'])
+            # Check if the current buffer has a valid WebM header
+            has_valid_header = False
+            if len(session['buffer']) >= 4:
+                # Simple check for WebM header (0x1A 0x45 0xDF 0xA3)
+                has_valid_header = session['buffer'][0:4] == b'\x1a\x45\xdf\xa3'
+            
+            # Prepare audio data for transcription
+            transcription_data = session['buffer']
+            
+            # If current buffer doesn't have a valid header but we have a saved header
+            if not has_valid_header and session['webm_header'] is not None:
+                logger.info("Adding WebM header to buffer for transcription")
+                transcription_data = session['webm_header'] + session['buffer']
+            
+            # Create a file-like object for transcription
+            audio_file = io.BytesIO(transcription_data)
             audio_file.name = 'audio.webm'
 
             # Transcribe the audio chunk
             try:
-                # Use the audio file directly with the OpenAI client
-                transcript_response = client.audio.transcriptions.create(
-                    model=speech_model,
-                    file=audio_file
-                )
-                transcript = transcript_response.text
+                # First try with WebM format
+                try:
+                    transcript_response = client.audio.transcriptions.create(
+                        model=speech_model,
+                        file=audio_file
+                    )
+                    transcript = transcript_response.text
+                    # Reset format failures counter on success
+                    session['format_failures'] = 0
+                    
+                except Exception as e:
+                    # If WebM format fails, try converting to MP3
+                    if "Invalid file format" in str(e) or session['format_failures'] > 3:
+                        logger.info("WebM format failed, converting to MP3 for transcription")
+                        session['format_failures'] += 1
+                        
+                        # Save WebM data to a temporary file
+                        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_webm:
+                            temp_webm.write(transcription_data)
+                            temp_webm_path = temp_webm.name
+                        
+                        try:
+                            # Convert WebM to MP3 using pydub
+                            audio = AudioSegment.from_file(temp_webm_path, format="webm")
+                            
+                            # Export as MP3 to another temporary file
+                            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_mp3:
+                                temp_mp3_path = temp_mp3.name
+                            
+                            audio.export(temp_mp3_path, format="mp3")
+                            
+                            # Use the MP3 file for transcription
+                            with open(temp_mp3_path, 'rb') as mp3_file:
+                                transcript_response = client.audio.transcriptions.create(
+                                    model=speech_model,
+                                    file=mp3_file
+                                )
+                                transcript = transcript_response.text
+                            
+                            # Clean up temporary files
+                            os.unlink(temp_webm_path)
+                            os.unlink(temp_mp3_path)
+                            
+                        except Exception as conv_error:
+                            logger.error(f"Error converting audio format: {conv_error}")
+                            # Clean up temp file if conversion failed
+                            if os.path.exists(temp_webm_path):
+                                os.unlink(temp_webm_path)
+                            raise
+                    else:
+                        # If not a format error, re-raise the original exception
+                        raise
                 
                 # Send audio data for visualization
                 sio.emit('audio_data', {
@@ -308,10 +373,12 @@ def connect(sid, environ):
     # Initialize session for this client
     active_streaming_sessions[sid] = {
         'buffer': b'',
+        'webm_header': None,  # Store WebM header for reuse
         'last_activity': time.time(),
         'is_speaking': False,
         'current_message': '',
-        'audio_format': ''
+        'audio_format': '',
+        'format_failures': 0  # Track format failures to trigger format conversion
     }
     
     # Send welcome message
@@ -379,20 +446,13 @@ def end_audio_stream(sid):
 # Routes
 @app.route('/')
 def index():
-    # Generate a random room name if needed for better anonymity
-    room_name = jitsi_room_name
-    
-    return render_template('index.html', 
-                          jitsi_server_url=jitsi_server_url,
-                          jitsi_room_name=room_name,
+        return render_template('index.html', 
                           bot_display_name=bot_display_name)
 
 @app.route('/api/config')
 def get_config():
     """API endpoint to get configuration for the client"""
     return jsonify({
-        'jitsi_server_url': jitsi_server_url,
-        'jitsi_room_name': jitsi_room_name,
         'bot_display_name': bot_display_name
     })
 

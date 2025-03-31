@@ -5,22 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Operator</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="https://meet.jit.si/external_api.js"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>AI Operator</h1>
-            <p>Voice bot using Jitsi Meet and OpenAI</p>
+            <p>Voice assistant powered by OpenAI</p>
         </header>
 
         <main>
-            <div class="controls">
-                <button id="end-meeting" class="btn secondary">End Meeting</button>
+            <div class="media-container">
+                <div class="video-container">
+                    <video id="local-video" autoplay muted playsinline></video>
+                </div>
+                
+                <div class="controls">
+                    <button id="toggle-mic" class="btn primary">Start Microphone</button>
+                    <button id="toggle-video" class="btn primary">Start Video</button>
+                    <button id="end-session" class="btn secondary">End Session</button>
+                </div>
             </div>
-
-            <div id="meeting-container" style="width: 100%; height: 600px;"></div>
 
             <div class="ai-status">
                 <h3>AI Operator Status</h3>

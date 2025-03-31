@@ -8,19 +8,23 @@ let isRecording = false;
 let mediaStream = null;
 let audioAnalyser = null;
 let animationFrame = null;
-let jitsiApi = null;
 let isStreamingAudio = false;
 let streamingInterval = null;
 let currentAudioResponse = null;
 let audioQueue = [];
 let isPlayingAudio = false;
+let videoEnabled = false;
+let audioEnabled = false;
 
 // DOM elements
-const endMeetingBtn = document.getElementById('end-meeting');
+const toggleMicBtn = document.getElementById('toggle-mic');
+const toggleVideoBtn = document.getElementById('toggle-video');
+const endSessionBtn = document.getElementById('end-session');
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const transcriptContainer = document.getElementById('transcript-container');
 const audioVisualizer = document.getElementById('audio-visualizer');
+const localVideo = document.getElementById('local-video');
 
 // Initialize Socket.IO connection
 function initializeSocket() {
@@ -52,189 +56,210 @@ function initializeSocket() {
     socket.on('welcome_message', handleWelcomeMessage);
 }
 
-// Initialize Jitsi Meet API
-function initializeJitsiMeet(roomName) {
-    // Create a completely random room name to avoid authentication issues
-    const randomId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    const simpleRoomName = 'aiop-' + randomId;
+// Initialize media devices (camera and microphone)
+function initializeMediaDevices() {
+    // Set up event listeners for media control buttons
+    toggleMicBtn.addEventListener('click', toggleMicrophone);
+    toggleVideoBtn.addEventListener('click', toggleVideo);
+    endSessionBtn.addEventListener('click', endSession);
     
-    // Get the domain from the server URL
-    const domain = 'meet.jit.si';
-    
-    // Clear any existing content
-    const meetingContainer = document.getElementById('meeting-container');
-    meetingContainer.innerHTML = '';
-    
-    // Enhanced configuration for the Jitsi API to bypass authentication
-    const options = {
-        roomName: simpleRoomName,
-        width: '100%',
-        height: '600px',
-        parentNode: meetingContainer,
-        configOverwrite: {
-            startWithAudioMuted: false,
-            startWithVideoMuted: false,
-            prejoinPageEnabled: false,
-            disableModeratorIndicator: true,
-            enableClosePage: false,
-            disableDeepLinking: true,
-            // Disable authentication requirements
-            enableUserRolesBasedOnToken: false,
-            enableInsecureRoomNameWarning: false,
-            requireDisplayName: false,
-            enableNoisyMicDetection: false,
-            enableNoAudioDetection: false,
-            enableLobbyChat: false,
-            // Hide toolbar completely
-            toolbarConfig: {
-                alwaysVisible: false,
-                autoHideWhileChatIsOpen: true,
-                initialTimeout: 0,  // toolbar will auto-hide immediately
-                timeout: 0        // time in ms before the toolbar auto-hides
-            },
-            // Disable welcome page and profile
-            enableWelcomePage: false,
-            disableProfile: true,
-            p2p: {
-                enabled: true,
-                preferredCodec: 'VP9',
-                disableH264: true,
-                useStunTurn: true
-            },
-        },
-        interfaceConfigOverwrite: {
-            // Empty toolbar - this effectively removes all buttons
-            TOOLBAR_BUTTONS: [],
-            DISABLE_JOIN_LEAVE_NOTIFICATIONS: true,
-            DISABLE_FOCUS_INDICATOR: true,
-            DEFAULT_REMOTE_DISPLAY_NAME: 'Participant',
-            SHOW_JITSI_WATERMARK: false,
-            SHOW_WATERMARK_FOR_GUESTS: false,
-            SHOW_BRAND_WATERMARK: false,
-            GENERATE_ROOMNAMES_ON_WELCOME_PAGE: false,
-            DISPLAY_WELCOME_PAGE_CONTENT: false,
-            DISPLAY_WELCOME_PAGE_TOOLBAR_ADDITIONAL_CONTENT: false,
-            
-            // Additional UI elements from second config
-            DEFAULT_BACKGROUND: '#ffffff',
-            TOOLBAR_ALWAYS_VISIBLE: false,
-            AUTO_HIDE_HEADER: true,
-            INITIAL_TOOLBAR_TIMEOUT: 0,
-            TOOLBAR_TIMEOUT: 0,
-            HIDE_INVITE_MORE_HEADER: true,
-            SETTINGS_SECTIONS: [],
-            SHOW_PROMOTIONAL_CLOSE_PAGE: false,
-            AUTHENTICATION_ENABLE: false
-        },
-        userInfo: {
-            displayName: 'User'
-        }
-    };
-    
-    jitsiApi = new JitsiMeetExternalAPI(domain, options);
-    
-    // Add event listeners
-    jitsiApi.addListener('videoConferenceJoined', handleVideoConferenceJoined);
-    jitsiApi.addListener('videoConferenceLeft', handleVideoConferenceLeft);
-    jitsiApi.addListener('audioMuteStatusChanged', handleAudioMuteStatusChanged);
-    jitsiApi.addListener('participantJoined', handleParticipantJoined);
-    jitsiApi.addListener('participantLeft', handleParticipantLeft);
-    
-    endMeetingBtn.disabled = false;
+    // Disable end session button until connected
+    endSessionBtn.disabled = true;
 }
 
-// Event handler for when the local user joins the conference
-function handleVideoConferenceJoined(event) {
-    console.log('Video conference joined', event);
-    
-    // Add a slight delay to ensure Jitsi is fully initialized
-    setTimeout(() => {
-        // Get the local audio track to capture for AI processing
-        if (aiEnabled) {
-            // Force reset of audio context and visualizer
-            if (audioContext) {
-                try {
-                    audioContext.close().catch(err => console.error('Error closing audio context:', err));
-                    audioContext = null;
-                    audioAnalyser = null;
-                    
-                    if (animationFrame) {
-                        cancelAnimationFrame(animationFrame);
-                        animationFrame = null;
-                    }
-                } catch (e) {
-                    console.error('Error resetting audio context:', e);
-                }
-            }
-            
-            // Setup audio capture with fresh context
-            setupAudioCapture();
-            
-            // Explicitly get the audio track from Jitsi API if available
-            try {
-                const tracks = jitsiApi.getLocalTracks();
-                const audioTrack = tracks.find(track => track.getType() === 'audio');
-                
-                if (audioTrack) {
-                    console.log('Found Jitsi audio track, setting up visualizer directly');
-                    const stream = new MediaStream([audioTrack.getTrack()]);
-                    setupAudioVisualizer(stream);
-                }
-            } catch (e) {
-                console.error('Error getting Jitsi tracks:', e);
-            }
-        }
-    }, 1000); // 1 second delay to ensure everything is loaded
+// Toggle microphone on/off
+function toggleMicrophone() {
+    if (audioEnabled) {
+        // Turn off microphone
+        stopAudioCapture();
+        toggleMicBtn.textContent = 'Start Microphone';
+        toggleMicBtn.classList.remove('active');
+        audioEnabled = false;
+    } else {
+        // Turn on microphone
+        startAudioCapture();
+        toggleMicBtn.textContent = 'Stop Microphone';
+        toggleMicBtn.classList.add('active');
+        audioEnabled = true;
+    }
 }
 
-// Event handler for when the local user leaves the conference
-function handleVideoConferenceLeft(event) {
-    console.log('Video conference left', event);
+// Toggle video on/off
+function toggleVideo() {
+    if (videoEnabled) {
+        // Turn off video
+        stopVideoCapture();
+        toggleVideoBtn.textContent = 'Start Video';
+        toggleVideoBtn.classList.remove('active');
+        videoEnabled = false;
+    } else {
+        // Turn on video
+        startVideoCapture();
+        toggleVideoBtn.textContent = 'Stop Video';
+        toggleVideoBtn.classList.add('active');
+        videoEnabled = true;
+    }
+}
+
+// End the current session
+function endSession() {
+    // Stop all media tracks
+    stopAudioCapture();
+    stopVideoCapture();
     
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
+    // Reset UI
+    toggleMicBtn.textContent = 'Start Microphone';
+    toggleMicBtn.classList.remove('active');
+    toggleVideoBtn.textContent = 'Start Video';
+    toggleVideoBtn.classList.remove('active');
+    
+    // Update status
+    audioEnabled = false;
+    videoEnabled = false;
+    updateAiStatus(false);
+    
+    // Disconnect socket
+    if (socket) {
+        socket.disconnect();
     }
     
-    updateAiStatus(false);
+    addMessageToTranscript('System', 'Session ended', 'system');
 }
 
-// Event handler for audio mute status changes
-function handleAudioMuteStatusChanged(event) {
-    console.log('Audio mute status changed', event);
+// Start audio capture
+function startAudioCapture() {
+    if (mediaStream && mediaStream.getAudioTracks().length > 0) {
+        // If we already have a stream with audio, just enable it
+        mediaStream.getAudioTracks().forEach(track => track.enabled = true);
+        setupAudioProcessing();
+        return;
+    }
     
-    if (event.muted) {
-        // Stop recording if the user mutes their microphone
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
-            isRecording = false;
+    // Request audio access
+    navigator.mediaDevices.getUserMedia({ 
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000 // Optimized for speech recognition
+        }
+    })
+    .then(stream => {
+        // If we already have a video stream, add the audio tracks to it
+        if (mediaStream && mediaStream.getVideoTracks().length > 0) {
+            const videoTrack = mediaStream.getVideoTracks()[0];
+            mediaStream = new MediaStream([videoTrack, ...stream.getAudioTracks()]);
+            localVideo.srcObject = mediaStream;
+        } else {
+            mediaStream = stream;
         }
         
-        if (isStreamingAudio) {
-            stopAudioStreaming();
+        setupAudioProcessing();
+        endSessionBtn.disabled = false;
+    })
+    .catch(error => {
+        console.error('Error accessing microphone:', error);
+        addMessageToTranscript('System', 'Error accessing microphone. Please check permissions.', 'system');
+        toggleMicBtn.textContent = 'Start Microphone';
+        toggleMicBtn.classList.remove('active');
+        audioEnabled = false;
+    });
+}
+
+// Stop audio capture
+function stopAudioCapture() {
+    if (mediaStream) {
+        // Stop all audio tracks
+        mediaStream.getAudioTracks().forEach(track => {
+            track.enabled = false;
+            track.stop();
+        });
+    }
+    
+    // Stop audio processing
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        isRecording = false;
+    }
+    
+    if (isStreamingAudio) {
+        stopAudioStreaming();
+    }
+    
+    // Clean up audio context
+    if (audioContext) {
+        try {
+            audioContext.close().catch(err => console.error('Error closing audio context:', err));
+            audioContext = null;
+            audioAnalyser = null;
+            
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+        } catch (e) {
+            console.error('Error cleaning up audio context:', e);
         }
-    } else if (aiEnabled) {
-        // Resume recording if the user unmutes their microphone and AI is enabled
-        setupAudioCapture();
     }
 }
 
-// Event handler for when a participant joins the conference
-function handleParticipantJoined(event) {
-    console.log('Participant joined', event);
-    addMessageToTranscript('System', `${event.displayName} joined the meeting`, 'system');
-}
-
-// Event handler for when a participant leaves the conference
-function handleParticipantLeft(event) {
-    console.log('Participant left', event);
-    addMessageToTranscript('System', `${event.displayName} left the meeting`, 'system');
-}
-
-// Setup audio capture from the Jitsi Meet conference
-function setupAudioCapture() {
-    console.log('Setting up audio capture...');
+// Start video capture
+function startVideoCapture() {
+    if (mediaStream && mediaStream.getVideoTracks().length > 0) {
+        // If we already have a stream with video, just enable it
+        mediaStream.getVideoTracks().forEach(track => track.enabled = true);
+        localVideo.srcObject = mediaStream;
+        return;
+    }
     
-    // Always create a new AudioContext to ensure proper initialization
+    // Request video access
+    navigator.mediaDevices.getUserMedia({ video: true })
+    .then(stream => {
+        // If we already have an audio stream, add the video track to it
+        if (mediaStream && mediaStream.getAudioTracks().length > 0) {
+            const audioTrack = mediaStream.getAudioTracks()[0];
+            mediaStream = new MediaStream([audioTrack, ...stream.getVideoTracks()]);
+        } else {
+            mediaStream = stream;
+        }
+        
+        localVideo.srcObject = mediaStream;
+        endSessionBtn.disabled = false;
+    })
+    .catch(error => {
+        console.error('Error accessing camera:', error);
+        addMessageToTranscript('System', 'Error accessing camera. Please check permissions.', 'system');
+        toggleVideoBtn.textContent = 'Start Video';
+        toggleVideoBtn.classList.remove('active');
+        videoEnabled = false;
+    });
+}
+
+// Stop video capture
+function stopVideoCapture() {
+    if (mediaStream) {
+        // Stop all video tracks
+        mediaStream.getVideoTracks().forEach(track => {
+            track.enabled = false;
+            track.stop();
+        });
+        
+        // If we still have audio tracks, update the stream
+        if (mediaStream.getAudioTracks().length > 0) {
+            const audioTracks = mediaStream.getAudioTracks();
+            mediaStream = new MediaStream(audioTracks);
+        }
+    }
+    
+    // Clear the video element
+    localVideo.srcObject = null;
+}
+
+// Setup audio processing for streaming to the server
+function setupAudioProcessing() {
+    console.log('Setting up audio processing...');
+    
+    // Initialize audio context if needed
     try {
         // Close previous context if it exists to prevent memory leaks
         if (audioContext) {
@@ -255,143 +280,82 @@ function setupAudioCapture() {
         console.error('Error initializing AudioContext:', e);
     }
     
-    // Get the local audio stream from Jitsi Meet
-    navigator.mediaDevices.getUserMedia({ 
-        audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: 16000 // Optimized for speech recognition
-        }, 
-        video: false 
-    })
-        .then(stream => {
-            console.log('Got audio stream, setting up recorder...');
-            mediaStream = stream;
-            
-            // Setup the audio visualizer immediately after getting the stream
-            setupAudioVisualizer(stream);
-            
-            // Create a media recorder optimized for real-time streaming
-            let options;
-            
-            // Use WebM format consistently since it's well supported by browsers and OpenAI
-            try {
-                console.log('Setting up audio recording with WebM format');
-                
-                if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-                    options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
-                    console.log('Using WebM with Opus codec for recording');
-                } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-                    options = { mimeType: 'audio/webm', audioBitsPerSecond: 16000 };
-                    console.log('Using WebM format for recording');
-                } else {
-                    // Fallback options if WebM is not supported
-                    console.log('WebM not supported, trying alternative formats');
-                    if (MediaRecorder.isTypeSupported('audio/mp3')) {
-                        options = { mimeType: 'audio/mp3', audioBitsPerSecond: 16000 };
-                        console.log('Using MP3 format for recording');
-                    } else {
-                        // Last resort fallback
-                        console.log('No specific format supported, using browser default');
-                        options = { audioBitsPerSecond: 16000 };
-                    }
-                }
-            } catch (e) {
-                console.error('Error checking audio format support:', e);
-                // Default fallback
-                options = { audioBitsPerSecond: 16000 };
-            }
-            mediaRecorder = new MediaRecorder(stream, options);
-            
-            mediaRecorder.ondataavailable = event => {
-                if (event.data.size > 0) {
-                    if (isStreamingAudio) {
-                        // In streaming mode, immediately send each chunk
-                        sendAudioChunkToServer(event.data);
-                    } else {
-                        // In batch mode, collect chunks
-                        audioChunks.push(event.data);
-                    }
-                }
-            };
-            
-            mediaRecorder.onstop = () => {
-                if (!isStreamingAudio && audioChunks.length > 0 && aiEnabled) {
-                    // In batch mode, send the complete audio blob
-                    // Use the same MIME type that was used for recording
-                    const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/wav' });
-                    console.log('Sending audio blob to server, size:', audioBlob.size);
-                    sendAudioToServer(audioBlob);
-                    audioChunks = [];
-                } else if (isStreamingAudio) {
-                    // In streaming mode, signal the end of the stream
-                    socket.emit('end_audio_stream');
-                }
-                
-                // Restart recording if AI is still enabled
-                if (aiEnabled && !isRecording) {
-                    if (isStreamingAudio) {
-                        startAudioStreaming();
-                    } else {
-                        startRecording();
-                    }
-                }
-            };
-            
-            // Set up audio visualizer
-            setupAudioVisualizer(stream);
-            
-            // Start streaming audio instead of batch recording
-            startAudioStreaming();
-            console.log('Started real-time audio streaming');
-        })
-        .catch(error => {
-            console.error('Error accessing microphone:', error);
-            addMessageToTranscript('System', 'Error accessing microphone. Please check permissions.', 'system');
-        });
-}
-
-// Function to get Jitsi audio track directly
-function getJitsiAudioTrack() {
-    if (!jitsiApi) {
-        console.warn('Jitsi API not available');
-        return null;
-    }
+    // Setup the audio visualizer
+    setupAudioVisualizer(mediaStream);
     
+    // Create a media recorder optimized for real-time streaming
+    let options;
+    
+    // Use WebM format consistently since it's well supported by browsers and OpenAI
     try {
-        // Try to get local tracks from Jitsi API
-        const tracks = jitsiApi.getLocalTracks();
-        console.log('Got Jitsi tracks:', tracks);
+        console.log('Setting up audio recording with WebM format');
         
-        if (tracks && tracks.length > 0) {
-            // Find the audio track
-            const audioTrack = tracks.find(track => track.getType() === 'audio');
-            if (audioTrack) {
-                console.log('Found Jitsi audio track');
-                return audioTrack.getTrack();
-            }
-        }
-        
-        // If we can't get it from the API, try another approach
-        const participants = jitsiApi.getParticipantsInfo();
-        const localParticipant = participants.find(p => p.isLocal);
-        
-        if (localParticipant) {
-            console.log('Found local participant, attempting to get audio track');
-            // This is a more direct approach that might work in some cases
-            const audioTrack = jitsiApi._getParticipantAudioTrack(localParticipant.id);
-            if (audioTrack) {
-                return audioTrack;
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
+            console.log('Using WebM with Opus codec for recording');
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            options = { mimeType: 'audio/webm', audioBitsPerSecond: 16000 };
+            console.log('Using WebM format for recording');
+        } else {
+            // Fallback options if WebM is not supported
+            console.log('WebM not supported, trying alternative formats');
+            if (MediaRecorder.isTypeSupported('audio/mp3')) {
+                options = { mimeType: 'audio/mp3', audioBitsPerSecond: 16000 };
+                console.log('Using MP3 format for recording');
+            } else {
+                // Last resort fallback
+                console.log('No specific format supported, using browser default');
+                options = { audioBitsPerSecond: 16000 };
             }
         }
     } catch (e) {
-        console.error('Error getting Jitsi audio track:', e);
+        console.error('Error checking audio format support:', e);
+        // Default fallback
+        options = { audioBitsPerSecond: 16000 };
     }
     
-    console.warn('Could not get Jitsi audio track, falling back to getUserMedia');
-    return null;
+    mediaRecorder = new MediaRecorder(mediaStream, options);
+    
+    mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+            if (isStreamingAudio) {
+                // In streaming mode, immediately send each chunk
+                sendAudioChunkToServer(event.data);
+            } else {
+                // In batch mode, collect chunks
+                audioChunks.push(event.data);
+            }
+        }
+    };
+    
+    mediaRecorder.onstop = () => {
+        if (!isStreamingAudio && audioChunks.length > 0 && aiEnabled) {
+            // In batch mode, send the complete audio blob
+            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/wav' });
+            console.log('Sending audio blob to server, size:', audioBlob.size);
+            sendAudioToServer(audioBlob);
+            audioChunks = [];
+        } else if (isStreamingAudio) {
+            // In streaming mode, signal the end of the stream
+            socket.emit('end_audio_stream');
+        }
+        
+        // Restart recording if AI is still enabled
+        if (aiEnabled && !isRecording && audioEnabled) {
+            if (isStreamingAudio) {
+                startAudioStreaming();
+            } else {
+                startRecording();
+            }
+        }
+    };
+    
+    // Start streaming audio
+    startAudioStreaming();
+    console.log('Started real-time audio streaming');
 }
+
+
 
 // Setup audio visualizer
 function setupAudioVisualizer(stream) {
@@ -1060,8 +1024,6 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/config')
         .then(response => response.json())
         .then(config => {
-            window.jitsiServerUrl = config.jitsi_server_url;
-            window.jitsiRoomName = config.jitsi_room_name;
             window.botDisplayName = config.bot_display_name;
             
             // Initialize Socket.IO connection
@@ -1070,40 +1032,20 @@ document.addEventListener('DOMContentLoaded', () => {
             // Initialize audio visualizer immediately
             initializeAudioVisualizer();
             
-            // Automatically start the meeting
-            setTimeout(() => {
-                // Remove the iframe that might be causing issues
-                const iframe = document.getElementById('jitsi-iframe');
-                if (iframe) {
-                    iframe.parentNode.removeChild(iframe);
-                }
-                
-                // Initialize Jitsi with the API
-                initializeJitsiMeet(window.jitsiRoomName);
-                endMeetingBtn.disabled = false;
-                
-                // Always enable AI operator after a short delay
-                setTimeout(() => {
-                    aiEnabled = true;
-                    updateAiStatus(true);
-                    setupAudioCapture();
-                }, 3000);
-            }, 1000);
+            // Initialize media devices
+            initializeMediaDevices();
+            
+            // Enable AI operator
+            aiEnabled = true;
+            updateAiStatus(true);
+            
+            // Add welcome message to transcript
+            addMessageToTranscript('System', 'Application initialized. Click "Start Microphone" to begin.', 'system');
         })
         .catch(error => {
             console.error('Error fetching configuration:', error);
+            addMessageToTranscript('System', 'Error initializing application. Please reload the page.', 'system');
         });
-    
-    // End meeting button click handler
-    endMeetingBtn.addEventListener('click', () => {
-        if (jitsiApi) {
-            jitsiApi.dispose();
-            jitsiApi = null;
-        }
-        
-        // Reload the page to restart everything
-        window.location.reload();
-    });
     
     // AI is always enabled by default
 });
