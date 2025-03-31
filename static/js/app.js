@@ -853,8 +853,9 @@ function handleStreamingAudio(data) {
     
     if (!audio) return;
     
-    // Convert the base64 audio to a blob
-    const audioBlob = base64ToBlob(audio, 'audio/mpeg');
+    // Convert the base64 audio to a blob - OpenAI TTS API returns MP3
+    const audioBlob = base64ToBlob(audio, 'audio/mp3');
+    console.log('Created audio blob with MIME type: audio/mp3');
     
     // Add to the audio queue for sequential playback
     audioQueue.push({
@@ -878,6 +879,7 @@ function handleStreamingAudio(data) {
 // Play the next audio chunk in the queue
 function playNextAudioChunk() {
     if (audioQueue.length === 0) {
+        console.log('Audio queue is empty, stopping playback');
         isPlayingAudio = false;
         return;
     }
@@ -887,7 +889,21 @@ function playNextAudioChunk() {
     
     // Create an audio element
     const audioUrl = URL.createObjectURL(audioItem.blob);
+    console.log(`Created audio URL for chunk ${audioItem.index + 1}/${audioItem.total}: ${audioUrl}`);
     const audio = new Audio(audioUrl);
+    
+    // Add error handler
+    audio.onerror = (e) => {
+        console.error(`Error playing audio chunk ${audioItem.index + 1}/${audioItem.total}:`, e);
+        console.error('Audio error code:', audio.error ? audio.error.code : 'unknown');
+        console.error('Audio error message:', audio.error ? audio.error.message : 'unknown');
+        
+        // Continue with next chunk despite error
+        setTimeout(() => {
+            URL.revokeObjectURL(audioUrl);
+            playNextAudioChunk();
+        }, 50);
+    };
     
     // When this chunk finishes, play the next one
     audio.onended = () => {
@@ -944,7 +960,19 @@ function playNextAudioChunk() {
     }
     
     // Play the audio
-    audio.play();
+    console.log(`Playing audio chunk ${audioItem.index + 1}/${audioItem.total}`);
+    audio.play()
+        .then(() => {
+            console.log(`Started playing audio chunk ${audioItem.index + 1}/${audioItem.total}`);
+        })
+        .catch(error => {
+            console.error(`Failed to play audio chunk ${audioItem.index + 1}/${audioItem.total}:`, error);
+            // Try to continue with next chunk despite error
+            setTimeout(() => {
+                URL.revokeObjectURL(audioUrl);
+                playNextAudioChunk();
+            }, 50);
+        });
 }
 
 // Convert base64 to Blob

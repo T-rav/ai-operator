@@ -227,6 +227,7 @@ def process_complete_message(sid, message):
 # Enhanced stream speech response to client with faster processing
 def stream_speech_response(sid, text):
     try:
+        logger.debug(f"Generating speech for text: {text[:50]}{'...' if len(text) > 50 else ''}")
         # For longer responses, split them into smaller chunks for faster streaming
         max_chunk_length = 50  # Smaller chunks for faster response
         
@@ -250,24 +251,28 @@ def stream_speech_response(sid, text):
         
         # Process each chunk and stream the audio
         for i, chunk in enumerate(chunks):
+            logger.debug(f"Generating speech for chunk {i+1}/{len(chunks)}: {chunk}")
             speech_response = client.audio.speech.create(
                 model=voice_model,
                 voice=voice_voice,
                 input=chunk,
                 speed=1.1  # Slightly faster speech for better responsiveness
             )
+            logger.debug(f"Successfully generated speech for chunk {i+1}/{len(chunks)}, size: {len(speech_response.content)} bytes")
             
             # Get the speech content as bytes and convert to base64
             speech_bytes = speech_response.content
             speech_base64 = base64.b64encode(speech_bytes).decode('utf-8')
             
             # Stream the audio chunk to the client
+            logger.debug(f"Streaming audio chunk {i+1}/{len(chunks)} to client, base64 length: {len(speech_base64)} chars")
             sio.emit('streaming_audio', {
                 'audio': speech_base64,
                 'chunk_index': i,
                 'total_chunks': len(chunks),
                 'is_final': i == len(chunks) - 1
             }, room=sid)
+            logger.debug(f"Sent audio chunk {i+1}/{len(chunks)} to client")
             
     except Exception as e:
         logger.error(f"Error streaming speech response: {e}")
