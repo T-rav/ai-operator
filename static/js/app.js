@@ -31,6 +31,21 @@ function initializeWebSocket() {
             websocketUrl = config.websocket_url;
             console.log('WebSocket URL:', websocketUrl);
             connectWebSocket();
+            
+            // Set up a periodic ping to keep the connection alive
+            setInterval(() => {
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    // Send a small ping message to keep the connection alive
+                    try {
+                        // Send a simple ping message as a JSON string
+                        const pingMessage = JSON.stringify({ type: 'ping' });
+                        websocket.send(pingMessage);
+                        console.log('Sent ping to keep connection alive');
+                    } catch (error) {
+                        console.error('Error sending ping:', error);
+                    }
+                }
+            }, 30000); // Send a ping every 30 seconds
         })
         .catch(error => {
             console.error('Error fetching config:', error);
@@ -43,51 +58,100 @@ function initializeWebSocket() {
 // Connect to the Pipecat WebSocket server
 function connectWebSocket() {
     if (websocket && websocket.readyState !== WebSocket.CLOSED) {
-        console.log('WebSocket already connected');
+        console.log('WebSocket already connected, state:', websocket.readyState);
         return;
     }
     
+    // If the URL contains 0.0.0.0, replace it with localhost
+    if (websocketUrl.includes('0.0.0.0')) {
+        websocketUrl = websocketUrl.replace('0.0.0.0', 'localhost');
+        console.log('Adjusted WebSocket URL to use localhost:', websocketUrl);
+    }
+    
+    // Ensure the URL has the correct format
+    if (!websocketUrl.startsWith('ws://')) {
+        websocketUrl = 'ws://' + websocketUrl;
+    }
+    if (!websocketUrl.endsWith('/ws')) {
+        websocketUrl = websocketUrl.endsWith('/') ? websocketUrl + 'ws' : websocketUrl + '/ws';
+    }
+    
     console.log('Connecting to WebSocket server at:', websocketUrl);
-    websocket = new WebSocket(websocketUrl);
     
-    websocket.onopen = () => {
-        console.log('Connected to Pipecat WebSocket server');
-        updateAiStatus(true);
-    };
-    
-    websocket.onclose = () => {
-        console.log('Disconnected from Pipecat WebSocket server');
-        updateAiStatus(false);
-        stopAudioStreaming();
+    try {
+        // Create a new WebSocket connection
+        websocket = new WebSocket(websocketUrl);
         
-        // Attempt to reconnect after a delay
-        setTimeout(() => {
-            if (aiEnabled) {
-                connectWebSocket();
+        // Set binary type to arraybuffer for better compatibility
+        websocket.binaryType = 'arraybuffer';
+        
+        websocket.onopen = (event) => {
+            console.log('Connected to Pipecat WebSocket server', event);
+            updateAiStatus(true);
+            
+            // Don't send any handshake message - Pipecat expects binary audio data only
+            console.log('WebSocket connection established, ready to send audio data');
+            
+            // Start sending audio immediately if we're in streaming mode
+            if (isStreamingAudio && mediaRecorder && mediaRecorder.state !== 'recording') {
+                console.log('Automatically starting audio streaming after connection');
+                startAudioStreaming();
             }
-        }, 3000);
-    };
-    
-    websocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-    
-    websocket.onmessage = (event) => {
-        try {
-            // Parse the binary message from Pipecat
-            const data = event.data;
-            if (data instanceof Blob) {
-                // Handle binary audio data
-                handleIncomingAudio(data);
-            } else {
-                // Handle text data (JSON)
-                const jsonData = JSON.parse(data);
-                handlePipecatMessage(jsonData);
+        };
+        
+        websocket.onclose = (event) => {
+            console.log('WebSocket closed - Code:', event.code, 'Reason:', event.reason, 'Clean:', event.wasClean);
+            updateAiStatus(false);
+            stopAudioStreaming();
+            
+            // Log detailed information about the connection state
+            console.log('Connection was in state:', websocket.readyState, 'before closing');
+            console.log('Audio streaming was:', isStreamingAudio ? 'active' : 'inactive');
+            
+            // Attempt to reconnect after a delay
+            setTimeout(() => {
+                if (aiEnabled) {
+                    console.log('Attempting to reconnect WebSocket...');
+                    connectWebSocket();
+                }
+            }, 3000);
+        };
+        
+        websocket.onerror = (error) => {
+            console.error('WebSocket error occurred:', error);
+            // Log more details about the connection state
+            console.log('Connection state at error:', websocket.readyState);
+        };
+        
+        websocket.onmessage = (event) => {
+            try {
+                console.log('Received message from server, type:', typeof event.data);
+                
+                // Parse the message from Pipecat
+                const data = event.data;
+                if (data instanceof ArrayBuffer || data instanceof Blob) {
+                    // Handle binary audio data
+                    console.log('Received binary audio data, size:', data.byteLength || data.size);
+                    handleIncomingAudio(data);
+                } else {
+                    // Handle text data (JSON)
+                    console.log('Received text message:', data.substring(0, 100) + '...');
+                    const jsonData = JSON.parse(data);
+                    handlePipecatMessage(jsonData);
+                }
+            } catch (error) {
+                console.error('Error processing WebSocket message:', error);
+                console.log('Raw message data:', event.data);
             }
-        } catch (error) {
-            console.error('Error processing WebSocket message:', error);
-        }
-    };
+        };
+    } catch (error) {
+        console.error('Error creating WebSocket connection:', error);
+        
+        // Try with a fallback URL using localhost and explicit port
+        websocketUrl = `ws://localhost:8765/ws`;
+        console.log('Trying fallback WebSocket URL:', websocketUrl);
+        setTimeout(connectWebSocket, 1000);
+    }
 }
 
 // Initialize media devices and UI elements
@@ -252,11 +316,15 @@ function setupAudioProcessing() {
     // Create a media recorder optimized for real-time streaming
     let options;
     
-    // Use WebM format consistently since it's well supported by browsers and OpenAI
+    // Pipecat works best with raw PCM audio data
     try {
-        console.log('Setting up audio recording with WebM format');
+        console.log('Setting up audio recording with format compatible with Pipecat');
         
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        // First try PCM format if supported
+        if (MediaRecorder.isTypeSupported('audio/wav')) {
+            options = { mimeType: 'audio/wav', audioBitsPerSecond: 16000 };
+            console.log('Using WAV format for recording');
+        } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
             options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
             console.log('Using WebM with Opus codec for recording');
         } else if (MediaRecorder.isTypeSupported('audio/webm')) {
@@ -518,21 +586,43 @@ function startAudioStreaming() {
         isStreamingAudio = true;
         isRecording = true;
         
-        // Use a shorter timeslice (50ms) to get more frequent ondataavailable events
-        // This allows for more real-time streaming with lower latency
-        mediaRecorder.start(50);
-        
-        // Set a longer timeout for streaming mode (30 seconds)
-        // This gives more time for natural conversation pauses
-        clearTimeout(streamingInterval);
-        streamingInterval = setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                console.log('Stopping streaming after timeout...');
-                mediaRecorder.stop();
-                isRecording = false;
-            }
-        }, 30000);
+        // Before starting to stream, make sure we have a valid WebSocket connection
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+            console.log('WebSocket not connected, attempting to connect before streaming...');
+            connectWebSocket();
+            
+            // Wait a short time for the connection to establish
+            setTimeout(() => {
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    console.log('WebSocket connected, now starting audio streaming');
+                    startAudioRecording();
+                } else {
+                    console.error('Could not establish WebSocket connection for streaming');
+                }
+            }, 1000);
+        } else {
+            // WebSocket is already connected, start recording immediately
+            startAudioRecording();
+        }
     }
+}
+
+// Start the actual audio recording process
+function startAudioRecording() {
+    // Use a shorter timeslice (50ms) to get more frequent ondataavailable events
+    // This allows for more real-time streaming with lower latency
+    mediaRecorder.start(50);
+    
+    // Set a longer timeout for streaming mode (30 seconds)
+    // This gives more time for natural conversation pauses
+    clearTimeout(streamingInterval);
+    streamingInterval = setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            console.log('Stopping streaming after timeout...');
+            mediaRecorder.stop();
+            isRecording = false;
+        }
+    }, 30000);
 }
 
 // Stop audio streaming
@@ -569,14 +659,43 @@ function sendAudioToServer(audioBlob) {
 // Send audio chunk to Pipecat WebSocket server for real-time streaming
 function sendAudioChunkToServer(audioChunk) {
     if (websocket && websocket.readyState === WebSocket.OPEN) {
-        // Send the raw audio blob directly to the WebSocket server
-        // Pipecat expects binary audio data, not base64
-        websocket.send(audioChunk);
-        
-        // Log less frequently to reduce console spam
-        if (Math.random() < 0.05) { // Only log about 5% of chunks
-            console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
+        try {
+            // Convert the Blob to ArrayBuffer for Pipecat compatibility
+            const reader = new FileReader();
+            
+            reader.onload = function() {
+                try {
+                    // Get the ArrayBuffer from the reader result
+                    const audioData = reader.result;
+                    
+                    // Create a simple wrapper for the audio data
+                    // This is a minimal implementation to get it working
+                    // We're just sending the raw audio data without any metadata
+                    // Pipecat will handle the rest on the server side
+                    websocket.send(audioData);
+                    
+                    // Log less frequently to reduce console spam
+                    if (Math.random() < 0.01) { // Only log about 1% of chunks
+                        console.log('Sent audio chunk, size:', audioData.byteLength, 'bytes');
+                    }
+                } catch (error) {
+                    console.error('Error sending audio data:', error);
+                }
+            };
+            
+            reader.onerror = function() {
+                console.error('Error reading audio chunk as ArrayBuffer');
+            };
+            
+            // Start reading the Blob as an ArrayBuffer
+            reader.readAsArrayBuffer(audioChunk);
+        } catch (error) {
+            console.error('Error processing audio chunk:', error);
         }
+    } else if (!websocket || websocket.readyState === WebSocket.CLOSED) {
+        // Try to reconnect if the websocket is closed
+        console.log('WebSocket is closed, attempting to reconnect...');
+        connectWebSocket();
     }
 }
 

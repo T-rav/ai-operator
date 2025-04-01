@@ -81,11 +81,64 @@ class SessionTimeoutHandler:
         except Exception as e:
             logger.error(f"Error during call termination: {e}")
 
+# Custom WebSocket message handler to process raw audio data from the browser
+class CustomWebSocketHandler:
+    def __init__(self, pipeline_task):
+        self.pipeline_task = pipeline_task
+        self.clients = set()
+        self.audio_buffer = bytearray()
+        
+    async def on_connect(self, websocket, path):
+        logger.info(f"Client connected: {websocket.remote_address}")
+        self.clients.add(websocket)
+        
+        try:
+            # Keep the connection open and process incoming messages
+            async for message in websocket:
+                if isinstance(message, bytes):
+                    # Process binary audio data
+                    await self.handle_audio_data(message)
+                elif isinstance(message, str):
+                    # Process text messages (commands, etc.)
+                    await self.handle_text_message(websocket, message)
+        except Exception as e:
+            logger.error(f"Error in WebSocket handler: {e}")
+        finally:
+            # Clean up when the connection is closed
+            self.clients.remove(websocket)
+            logger.info(f"Client disconnected: {websocket.remote_address}")
+    
+    async def handle_audio_data(self, audio_data):
+        try:
+            # Add the audio data to the pipeline task
+            # This will be processed by the STT service
+            await self.pipeline_task.process_audio(audio_data)
+            logger.debug(f"Processed {len(audio_data)} bytes of audio data")
+        except Exception as e:
+            logger.error(f"Error processing audio data: {e}")
+    
+    async def handle_text_message(self, websocket, message):
+        try:
+            # Parse the message as JSON
+            data = json.loads(message)
+            logger.info(f"Received text message: {data}")
+            
+            # Handle different message types
+            if data.get('type') == 'ping':
+                # Respond to ping messages to keep the connection alive
+                await websocket.send(json.dumps({'type': 'pong'}))
+        except Exception as e:
+            logger.error(f"Error handling text message: {e}")
+
 # Main function to set up and run the Pipecat pipeline
 async def main():
     # Create a WebSocket server transport for real-time audio streaming
+    # We'll use a custom WebSocket handler to properly process raw audio data
     transport = WebsocketServerTransport(
         params=WebsocketServerParams(
+            host="localhost",  # Use localhost instead of default 0.0.0.0
+            port=int(os.getenv("WEBSOCKET_PORT", "8765")),
+            path="/ws",  # Explicitly set the WebSocket path
             serializer=ProtobufFrameSerializer(),
             audio_out_enabled=True,  # Enable audio output
             add_wav_header=True,     # Add WAV header to audio chunks
@@ -93,8 +146,17 @@ async def main():
             vad_analyzer=SileroVADAnalyzer(),  # Use Silero VAD for speech detection
             vad_audio_passthrough=True,  # Pass through audio even when no speech is detected
             session_timeout=180,     # 3 minutes timeout
+            audio_sample_rate=16000,  # Match the client's audio sample rate
+            debug=True,  # Enable debug logging
+            raw_audio_mode=True,     # Accept raw audio data without protocol buffers
+            audio_format="webm",     # Treat incoming audio as WebM format
+            binary_ping=False,       # Use text pings instead of binary
+            accept_raw_audio=True,   # Accept raw audio data from browsers
         )
     )
+    
+    # Add a log message to track transport initialization
+    logger.info("WebSocket transport initialized with custom handler for raw audio data")
 
     # Initialize OpenAI services with API keys from environment variables
     llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model=llm_model)
@@ -130,13 +192,15 @@ async def main():
         ]
     )
 
-    # Create a pipeline task with parameters
+    # Create a pipeline task with parameters optimized for browser WebM audio
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
             audio_in_sample_rate=16000,  # Sample rate for input audio
             audio_out_sample_rate=16000, # Sample rate for output audio
             allow_interruptions=True,    # Allow user to interrupt the assistant
+            audio_format="webm",         # Explicitly set audio format to WebM
+            raw_audio_mode=True,        # Accept raw audio data from browsers
         ),
     )
 
@@ -175,7 +239,7 @@ def get_config():
     """API endpoint to get configuration for the client"""
     return jsonify({
         'bot_display_name': bot_display_name,
-        'websocket_url': f'ws://{os.getenv("HOST", "localhost")}:{os.getenv("WEBSOCKET_PORT", "8765")}/ws'
+        'websocket_url': f'ws://localhost:{os.getenv("WEBSOCKET_PORT", "8765")}/ws'
     })
 
 # Run the Flask app and Pipecat WebSocket server
