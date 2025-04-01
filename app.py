@@ -110,6 +110,19 @@ class CustomWebSocketHandler:
     
     async def handle_audio_data(self, audio_data):
         try:
+            # Skip empty audio chunks (often sent as end-of-stream signals)
+            if len(audio_data) < 10:
+                logger.info("Received empty audio chunk, skipping processing")
+                return
+                
+            # Check if the audio data has a valid WebM header
+            has_webm_header = len(audio_data) >= 4 and audio_data[0:4] == b'\x1A\x45\xDF\xA3'
+            
+            if has_webm_header:
+                logger.debug("Audio data has valid WebM header")
+            else:
+                logger.warning("Audio data missing WebM header, may cause processing issues")
+            
             # Add the audio data to the pipeline task
             # This will be processed by the STT service
             await self.pipeline_task.process_audio(audio_data)
@@ -124,34 +137,62 @@ class CustomWebSocketHandler:
             logger.info(f"Received text message: {data}")
             
             # Handle different message types
-            if data.get('type') == 'ping':
+            msg_type = data.get('type', '')
+            
+            if msg_type == 'ping':
                 # Respond to ping messages to keep the connection alive
                 await websocket.send(json.dumps({'type': 'pong'}))
+                logger.info("Sent pong response to ping")
+                
+            elif msg_type == 'init':
+                # Handle initialization message from client
+                logger.info(f"Received initialization message: {data}")
+                # Send an acknowledgment
+                await websocket.send(json.dumps({
+                    'type': 'init_ack',
+                    'status': 'success',
+                    'message': 'Connection initialized successfully'
+                }))
+                logger.info("Sent initialization acknowledgment")
+                
+            elif msg_type == 'audio_data':
+                # Handle audio data sent as JSON
+                logger.info(f"Received audio data as JSON, converting to binary")
+                # Convert the array back to binary
+                if 'data' in data:
+                    try:
+                        # Convert the array back to binary
+                        audio_bytes = bytes(data['data'])
+                        # Process the audio data
+                        await self.handle_audio_data(audio_bytes)
+                    except Exception as e:
+                        logger.error(f"Error processing JSON audio data: {e}")
         except Exception as e:
             logger.error(f"Error handling text message: {e}")
 
 # Main function to set up and run the Pipecat pipeline
 async def main():
-    # Create a WebSocket server transport for real-time audio streaming
-    # We'll use a custom WebSocket handler to properly process raw audio data
+    # Create a simpler WebSocket server transport for real-time audio streaming
+    # Using a more direct approach without the complexity of Pipecat's default handler
     transport = WebsocketServerTransport(
         params=WebsocketServerParams(
-            host="localhost",  # Use localhost instead of default 0.0.0.0
+            host="0.0.0.0",          # Listen on all interfaces for better compatibility
             port=int(os.getenv("WEBSOCKET_PORT", "8765")),
-            path="/ws",  # Explicitly set the WebSocket path
+            path="/ws",              # Explicitly set the WebSocket path
             serializer=ProtobufFrameSerializer(),
             audio_out_enabled=True,  # Enable audio output
             add_wav_header=True,     # Add WAV header to audio chunks
-            vad_enabled=True,        # Enable Voice Activity Detection
-            vad_analyzer=SileroVADAnalyzer(),  # Use Silero VAD for speech detection
-            vad_audio_passthrough=True,  # Pass through audio even when no speech is detected
-            session_timeout=180,     # 3 minutes timeout
-            audio_sample_rate=16000,  # Match the client's audio sample rate
-            debug=True,  # Enable debug logging
+            vad_enabled=False,       # Disable VAD to simplify processing
+            session_timeout=600,     # 10 minutes timeout for longer sessions
+            audio_sample_rate=16000, # Match the client's audio sample rate
+            debug=True,              # Enable debug logging
             raw_audio_mode=True,     # Accept raw audio data without protocol buffers
             audio_format="webm",     # Treat incoming audio as WebM format
             binary_ping=False,       # Use text pings instead of binary
             accept_raw_audio=True,   # Accept raw audio data from browsers
+            max_message_size=10485760, # 10MB max message size
+            ping_interval=10,        # Send ping every 10 seconds
+            ping_timeout=30,         # 30 seconds ping timeout
         )
     )
     

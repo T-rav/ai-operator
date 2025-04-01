@@ -15,6 +15,7 @@ let audioQueue = [];
 let isPlayingAudio = false;
 let audioEnabled = false;
 let websocketUrl = null;
+let websocketKeepAliveInterval = null;
 
 // DOM elements
 const toggleMicBtn = document.getElementById('toggle-mic');
@@ -57,6 +58,9 @@ function initializeWebSocket() {
 
 // Connect to the Pipecat WebSocket server
 function connectWebSocket() {
+    // Reset reconnect attempts on manual connection
+    reconnectAttempts = 0;
+    
     if (websocket && websocket.readyState !== WebSocket.CLOSED) {
         console.log('WebSocket already connected, state:', websocket.readyState);
         return;
@@ -79,15 +83,46 @@ function connectWebSocket() {
     console.log('Connecting to WebSocket server at:', websocketUrl);
     
     try {
+        // Clean up any existing connection
+        if (websocket) {
+            try {
+                websocket.onclose = null;
+                websocket.onerror = null;
+                websocket.close();
+            } catch (e) {
+                console.error('Error cleaning up existing WebSocket:', e);
+            }
+        }
+        
         // Create a new WebSocket connection
         websocket = new WebSocket(websocketUrl);
         
         // Set binary type to arraybuffer for better compatibility
         websocket.binaryType = 'arraybuffer';
         
+        // Set a connection timeout
+        const connectionTimeout = setTimeout(() => {
+            if (websocket && websocket.readyState === WebSocket.CONNECTING) {
+                console.error('WebSocket connection timeout');
+                websocket.close();
+                // Try with a fallback URL
+                websocketUrl = `ws://localhost:8765/ws`;
+                setTimeout(connectWebSocket, 1000);
+            }
+        }, 5000);
+        
         websocket.onopen = (event) => {
+            clearTimeout(connectionTimeout);
             console.log('Connected to Pipecat WebSocket server', event);
             updateAiStatus(true);
+            
+            // Reset error counters on successful connection
+            consecutiveErrors = 0;
+            reconnectAttempts = 0;
+            
+            // Reset WebM header state for a new connection
+            webmHeader = null;
+            isFirstChunk = true;
             
             // Don't send any handshake message - Pipecat expects binary audio data only
             console.log('WebSocket connection established, ready to send audio data');
@@ -102,13 +137,27 @@ function connectWebSocket() {
         websocket.onclose = (event) => {
             console.log('WebSocket closed - Code:', event.code, 'Reason:', event.reason, 'Clean:', event.wasClean);
             updateAiStatus(false);
-            stopAudioStreaming();
+            
+            // Only stop streaming if it's active (prevents recursive calls)
+            if (isStreamingAudio) {
+                stopAudioStreaming();
+            }
+            
+            // Reset WebM header state when connection closes
+            webmHeader = null;
+            isFirstChunk = true;
             
             // Log detailed information about the connection state
             console.log('Connection was in state:', websocket.readyState, 'before closing');
             console.log('Audio streaming was:', isStreamingAudio ? 'active' : 'inactive');
             
-            // Attempt to reconnect after a delay
+            // Don't reconnect if the closure was clean and intentional
+            if (event.wasClean && (event.code === 1000 || event.code === 1001)) {
+                console.log('Clean WebSocket closure, not reconnecting automatically');
+                return;
+            }
+            
+            // Attempt to reconnect after a delay for unexpected closures
             setTimeout(() => {
                 if (aiEnabled) {
                     console.log('Attempting to reconnect WebSocket...');
@@ -129,19 +178,32 @@ function connectWebSocket() {
                 
                 // Parse the message from Pipecat
                 const data = event.data;
-                if (data instanceof ArrayBuffer || data instanceof Blob) {
-                    // Handle binary audio data
-                    console.log('Received binary audio data, size:', data.byteLength || data.size);
+                
+                if (data instanceof ArrayBuffer) {
+                    // Handle binary audio data as ArrayBuffer
+                    console.log('Received binary audio data as ArrayBuffer, size:', data.byteLength);
                     handleIncomingAudio(data);
+                } else if (data instanceof Blob) {
+                    // Handle binary audio data as Blob
+                    console.log('Received binary audio data as Blob, size:', data.size);
+                    handleIncomingAudio(data);
+                } else if (typeof data === 'string') {
+                    try {
+                        // Try to parse as JSON
+                        const jsonData = JSON.parse(data);
+                        console.log('Received JSON message:', jsonData);
+                        handlePipecatMessage(jsonData);
+                    } catch (jsonError) {
+                        // Not valid JSON, treat as text
+                        console.log('Received text message (not JSON):', data.substring(0, 100));
+                        // You might want to handle plain text messages differently
+                    }
                 } else {
-                    // Handle text data (JSON)
-                    console.log('Received text message:', data.substring(0, 100) + '...');
-                    const jsonData = JSON.parse(data);
-                    handlePipecatMessage(jsonData);
+                    console.warn('Received unknown data type:', data);
                 }
             } catch (error) {
                 console.error('Error processing WebSocket message:', error);
-                console.log('Raw message data:', event.data);
+                console.log('Raw message data:', typeof event.data);
             }
         };
     } catch (error) {
@@ -586,6 +648,10 @@ function startAudioStreaming() {
         isStreamingAudio = true;
         isRecording = true;
         
+        // Reset WebM header state for a new streaming session
+        webmHeader = null;
+        isFirstChunk = true;
+        
         // Before starting to stream, make sure we have a valid WebSocket connection
         if (!websocket || websocket.readyState !== WebSocket.OPEN) {
             console.log('WebSocket not connected, attempting to connect before streaming...');
@@ -604,6 +670,21 @@ function startAudioStreaming() {
             // WebSocket is already connected, start recording immediately
             startAudioRecording();
         }
+        
+        // Set up a keep-alive ping to prevent the connection from closing
+        clearInterval(websocketKeepAliveInterval);
+        websocketKeepAliveInterval = setInterval(() => {
+            if (websocket && websocket.readyState === WebSocket.OPEN && isStreamingAudio) {
+                try {
+                    // Send a simple ping message
+                    const pingMessage = JSON.stringify({ type: 'ping' });
+                    websocket.send(pingMessage);
+                    console.log('Sent keep-alive ping');
+                } catch (error) {
+                    console.error('Error sending keep-alive ping:', error);
+                }
+            }
+        }, 5000); // Send a ping every 5 seconds while streaming
     }
 }
 
@@ -627,19 +708,37 @@ function startAudioRecording() {
 
 // Stop audio streaming
 function stopAudioStreaming() {
+    console.log('Stopping audio streaming...');
     isStreamingAudio = false;
     clearTimeout(streamingInterval);
+    
+    // Clear the keep-alive interval to prevent unnecessary pings
+    if (typeof websocketKeepAliveInterval !== 'undefined' && websocketKeepAliveInterval !== null) {
+        clearInterval(websocketKeepAliveInterval);
+        websocketKeepAliveInterval = null;
+        console.log('Cleared WebSocket keep-alive interval');
+    }
     
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
         isRecording = false;
+        console.log('Stopped media recorder');
     }
     
-    // Send an empty audio chunk to signal the end of audio streaming
+    // Send a proper end-of-stream message
     if (websocket && websocket.readyState === WebSocket.OPEN) {
-        // Create an empty audio chunk to signal the end of streaming
-        const emptyChunk = new Blob([], { type: 'audio/webm' });
-        websocket.send(emptyChunk);
+        try {
+            // Send a JSON message to signal end of streaming
+            const endMessage = JSON.stringify({ type: 'end_stream' });
+            websocket.send(endMessage);
+            console.log('Sent end-of-stream message');
+            
+            // Also send an empty audio chunk as a fallback
+            const emptyChunk = new Blob([], { type: 'audio/webm' });
+            websocket.send(emptyChunk);
+        } catch (error) {
+            console.error('Error sending end-of-stream message:', error);
+        }
     }
 }
 
@@ -656,11 +755,26 @@ function sendAudioToServer(audioBlob) {
     }
 }
 
+// WebM header storage for proper audio format handling
+let webmHeader = null;
+let isFirstChunk = true;
+let consecutiveErrors = 0;
+let reconnectAttempts = 0;
+let lastSentChunkTime = 0;
+
 // Send audio chunk to Pipecat WebSocket server for real-time streaming
 function sendAudioChunkToServer(audioChunk) {
+    if (!isStreamingAudio) {
+        console.log('Audio streaming is inactive, not sending chunk');
+        return;
+    }
+    
     if (websocket && websocket.readyState === WebSocket.OPEN) {
         try {
-            // Convert the Blob to ArrayBuffer for Pipecat compatibility
+            // Reset consecutive errors counter on successful connection
+            consecutiveErrors = 0;
+            
+            // Convert the Blob to ArrayBuffer for processing
             const reader = new FileReader();
             
             reader.onload = function() {
@@ -668,53 +782,166 @@ function sendAudioChunkToServer(audioChunk) {
                     // Get the ArrayBuffer from the reader result
                     const audioData = reader.result;
                     
-                    // Create a simple wrapper for the audio data
-                    // This is a minimal implementation to get it working
-                    // We're just sending the raw audio data without any metadata
-                    // Pipecat will handle the rest on the server side
-                    websocket.send(audioData);
+                    // Handle WebM header for proper audio format
+                    if (isFirstChunk) {
+                        // Store the WebM header from the first chunk
+                        webmHeader = audioData.slice(0, 4000); // Store enough bytes to capture the header
+                        isFirstChunk = false;
+                        console.log('Stored WebM header from first chunk');
+                        
+                        // No handshake message - Pipecat expects binary data only
+                        console.log('First chunk ready, sending with WebM header');
+                    }
+                    
+                    // Ensure the audio data has a valid WebM header
+                    let dataToSend;
+                    if (webmHeader && !hasValidWebMHeader(new Uint8Array(audioData))) {
+                        // If this chunk is missing the header, prepend the stored header
+                        const combinedBuffer = new Uint8Array(webmHeader.byteLength + audioData.byteLength);
+                        combinedBuffer.set(new Uint8Array(webmHeader), 0);
+                        combinedBuffer.set(new Uint8Array(audioData), webmHeader.byteLength);
+                        dataToSend = combinedBuffer.buffer;
+                        console.log('Added WebM header to chunk');
+                    } else {
+                        // This chunk already has a valid header
+                        dataToSend = audioData;
+                    }
+                    
+                    // Pipecat expects raw binary audio data, not JSON
+                    // No need to wrap the audio data in a JSON message
+                    
+                    // Add a small delay between chunks to prevent overwhelming the server
+                    const now = Date.now();
+                    const timeSinceLastChunk = now - lastSentChunkTime;
+                    
+                    if (timeSinceLastChunk < 50) {
+                        // If we're sending chunks too quickly, add a small delay
+                        setTimeout(() => {
+                            if (websocket && websocket.readyState === WebSocket.OPEN && isStreamingAudio) {
+                                // Send the audio data directly as binary
+                                websocket.send(dataToSend);
+                                lastSentChunkTime = Date.now();
+                            }
+                        }, 50 - timeSinceLastChunk);
+                    } else {
+                        // Send immediately if we're not sending too quickly
+                        websocket.send(dataToSend);
+                        lastSentChunkTime = now;
+                    }
                     
                     // Log less frequently to reduce console spam
                     if (Math.random() < 0.01) { // Only log about 1% of chunks
-                        console.log('Sent audio chunk, size:', audioData.byteLength, 'bytes');
+                        console.log('Sent audio chunk, size:', dataToSend.byteLength, 'bytes');
                     }
                 } catch (error) {
                     console.error('Error sending audio data:', error);
+                    consecutiveErrors++;
+                    
+                    if (consecutiveErrors > 5) {
+                        console.error('Too many consecutive errors, reconnecting WebSocket...');
+                        reconnectWebSocket();
+                    }
                 }
             };
             
             reader.onerror = function() {
                 console.error('Error reading audio chunk as ArrayBuffer');
+                consecutiveErrors++;
             };
             
             // Start reading the Blob as an ArrayBuffer
             reader.readAsArrayBuffer(audioChunk);
         } catch (error) {
             console.error('Error processing audio chunk:', error);
+            consecutiveErrors++;
+            
+            if (consecutiveErrors > 5) {
+                console.error('Too many consecutive errors, reconnecting WebSocket...');
+                reconnectWebSocket();
+            }
         }
-    } else if (!websocket || websocket.readyState === WebSocket.CLOSED) {
+    } else if (!websocket || websocket.readyState === WebSocket.CLOSED || websocket.readyState === WebSocket.CLOSING) {
         // Try to reconnect if the websocket is closed
-        console.log('WebSocket is closed, attempting to reconnect...');
-        connectWebSocket();
+        console.log('WebSocket is closed or closing, attempting to reconnect...');
+        reconnectWebSocket();
+    } else if (websocket.readyState === WebSocket.CONNECTING) {
+        console.log('WebSocket is still connecting, waiting...');
     }
 }
 
+// Force reconnect the WebSocket
+function reconnectWebSocket() {
+    // Clean up existing connection
+    if (websocket) {
+        try {
+            websocket.onclose = null; // Prevent the onclose handler from firing
+            websocket.onerror = null; // Prevent the onerror handler from firing
+            websocket.close();
+        } catch (e) {
+            console.error('Error closing existing WebSocket:', e);
+        }
+        websocket = null;
+    }
+    
+    // Increment reconnect attempts
+    reconnectAttempts++;
+    
+    // Exponential backoff for reconnection
+    const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
+    console.log(`Reconnecting WebSocket in ${delay}ms (attempt ${reconnectAttempts})`);
+    
+    setTimeout(() => {
+        if (isStreamingAudio) {
+            connectWebSocket();
+        }
+    }, delay);
+}
+
+// Check if the audio data has a valid WebM header
+function hasValidWebMHeader(data) {
+    // Simple check for WebM header signature
+    // WebM files start with the EBML header (0x1A 0x45 0xDF 0xA3)
+    return data.length >= 4 && data[0] === 0x1A && data[1] === 0x45 && data[2] === 0xDF && data[3] === 0xA3;
+}
+
 // Handle incoming audio from Pipecat
-function handleIncomingAudio(audioBlob) {
-    // Create an audio URL and play it
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    
-    // Play the audio
-    audio.oncanplaythrough = () => {
-        audio.play()
-            .catch(error => console.error('Error playing audio:', error));
-    };
-    
-    // Clean up URL object after playing
-    audio.onended = () => {
-        URL.revokeObjectURL(audioUrl);
-    };
+function handleIncomingAudio(audioData) {
+    try {
+        console.log('Received audio data type:', typeof audioData, audioData instanceof ArrayBuffer ? 'ArrayBuffer' : audioData instanceof Blob ? 'Blob' : 'Unknown');
+        
+        // Convert ArrayBuffer to Blob if needed
+        let audioBlob;
+        if (audioData instanceof ArrayBuffer) {
+            // Convert ArrayBuffer to Blob
+            audioBlob = new Blob([audioData], { type: 'audio/wav' });
+            console.log('Converted ArrayBuffer to Blob for playback');
+        } else if (audioData instanceof Blob) {
+            // Already a Blob, use as is
+            audioBlob = audioData;
+        } else {
+            console.error('Received unknown audio data format:', audioData);
+            return;
+        }
+        
+        // Create an audio URL and play it
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        
+        // Play the audio
+        audio.oncanplaythrough = () => {
+            audio.play()
+                .then(() => console.log('Playing audio response'))
+                .catch(error => console.error('Error playing audio:', error));
+        };
+        
+        // Clean up URL object after playing
+        audio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            console.log('Audio playback complete, URL revoked');
+        };
+    } catch (error) {
+        console.error('Error handling incoming audio:', error);
+    }
 }
 
 // Handle Pipecat JSON messages
