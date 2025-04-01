@@ -378,31 +378,37 @@ function setupAudioProcessing() {
     // Create a media recorder optimized for real-time streaming
     let options;
     
-    // Pipecat works best with raw PCM audio data
+    // Pipecat explicitly requires WebM format for audio data
     try {
         console.log('Setting up audio recording with format compatible with Pipecat');
         
-        // First try PCM format if supported
-        if (MediaRecorder.isTypeSupported('audio/wav')) {
-            options = { mimeType: 'audio/wav', audioBitsPerSecond: 16000 };
-            console.log('Using WAV format for recording');
-        } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
-            console.log('Using WebM with Opus codec for recording');
-        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            options = { mimeType: 'audio/webm', audioBitsPerSecond: 16000 };
-            console.log('Using WebM format for recording');
+        // WebM with Opus is the most reliable format for Pipecat
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = { 
+                mimeType: 'audio/webm;codecs=opus', 
+                audioBitsPerSecond: 128000  // Higher bitrate for better quality
+            };
+            console.log('Using WebM with Opus codec for recording (optimal for Pipecat)');
+        } 
+        // Fallback to standard WebM if Opus isn't supported
+        else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            options = { 
+                mimeType: 'audio/webm', 
+                audioBitsPerSecond: 128000
+            };
+            console.log('Using standard WebM format for recording');
+        }
+        // WAV as a last resort, though Pipecat may have issues with it
+        else if (MediaRecorder.isTypeSupported('audio/wav')) {
+            options = { 
+                mimeType: 'audio/wav', 
+                audioBitsPerSecond: 128000
+            };
+            console.log('Using WAV format for recording (may have compatibility issues)');
         } else {
-            // Fallback options if WebM is not supported
-            console.log('WebM not supported, trying alternative formats');
-            if (MediaRecorder.isTypeSupported('audio/mp3')) {
-                options = { mimeType: 'audio/mp3', audioBitsPerSecond: 16000 };
-                console.log('Using MP3 format for recording');
-            } else {
-                // Last resort fallback
-                console.log('No specific format supported, using browser default');
-                options = { audioBitsPerSecond: 16000 };
-            }
+            // Last resort fallback
+            console.log('No WebM support detected - Pipecat requires WebM format');
+            options = { audioBitsPerSecond: 128000 };
         }
     } catch (e) {
         console.error('Error checking audio format support:', e);
@@ -416,7 +422,10 @@ function setupAudioProcessing() {
         if (event.data.size > 0) {
             if (isStreamingAudio) {
                 // In streaming mode, immediately send each chunk
-                sendAudioChunkToServer(event.data);
+                // Ensure we're sending WebM format by explicitly creating a new Blob
+                const webmBlob = new Blob([event.data], { type: 'audio/webm' });
+                console.log('Audio chunk ready, size:', webmBlob.size, 'bytes, type:', webmBlob.type);
+                sendAudioChunkToServer(webmBlob);
             } else {
                 // In batch mode, collect chunks
                 audioChunks.push(event.data);
