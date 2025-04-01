@@ -1,5 +1,5 @@
 // Global variables
-let socket = null;
+let websocket = null;
 let aiEnabled = true;
 let audioContext = null;
 let mediaRecorder = null;
@@ -13,8 +13,8 @@ let streamingInterval = null;
 let currentAudioResponse = null;
 let audioQueue = [];
 let isPlayingAudio = false;
-let videoEnabled = false;
 let audioEnabled = false;
+let websocketUrl = null;
 
 // DOM elements
 const toggleMicBtn = document.getElementById('toggle-mic');
@@ -22,37 +22,75 @@ const endSessionBtn = document.getElementById('end-session');
 const transcriptContainer = document.getElementById('transcript-container');
 const audioVisualizer = document.getElementById('audio-visualizer');
 
-// Initialize Socket.IO connection
-function initializeSocket() {
-    socket = io();
-    
-    socket.on('connect', () => {
-        console.log('Connected to server');
-        updateAiStatus(true);
-    });
-    
-    socket.on('disconnect', () => {
-        console.log('Disconnected from server');
-        updateAiStatus(false);
-        stopAudioStreaming();
-    });
-    
-    // Legacy handler
-    socket.on('ai_response', handleAiResponse);
-    
-    // New streaming handlers
-    socket.on('partial_transcript', handlePartialTranscript);
-    socket.on('streaming_response', handleStreamingResponse);
-    socket.on('streaming_audio', handleStreamingAudio);
-    
-    // Audio visualization data handler
-    socket.on('audio_data', handleAudioData);
-    
-    // Welcome message handler
-    socket.on('welcome_message', handleWelcomeMessage);
+// Initialize WebSocket connection to Pipecat server
+function initializeWebSocket() {
+    // Get the WebSocket URL from the server config
+    fetch('/api/config')
+        .then(response => response.json())
+        .then(config => {
+            websocketUrl = config.websocket_url;
+            console.log('WebSocket URL:', websocketUrl);
+            connectWebSocket();
+        })
+        .catch(error => {
+            console.error('Error fetching config:', error);
+            // Use default WebSocket URL if config fetch fails
+            websocketUrl = `ws://${window.location.hostname}:8765/ws`;
+            connectWebSocket();
+        });
 }
 
-// Initialize media devices
+// Connect to the Pipecat WebSocket server
+function connectWebSocket() {
+    if (websocket && websocket.readyState !== WebSocket.CLOSED) {
+        console.log('WebSocket already connected');
+        return;
+    }
+    
+    console.log('Connecting to WebSocket server at:', websocketUrl);
+    websocket = new WebSocket(websocketUrl);
+    
+    websocket.onopen = () => {
+        console.log('Connected to Pipecat WebSocket server');
+        updateAiStatus(true);
+    };
+    
+    websocket.onclose = () => {
+        console.log('Disconnected from Pipecat WebSocket server');
+        updateAiStatus(false);
+        stopAudioStreaming();
+        
+        // Attempt to reconnect after a delay
+        setTimeout(() => {
+            if (aiEnabled) {
+                connectWebSocket();
+            }
+        }, 3000);
+    };
+    
+    websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+    
+    websocket.onmessage = (event) => {
+        try {
+            // Parse the binary message from Pipecat
+            const data = event.data;
+            if (data instanceof Blob) {
+                // Handle binary audio data
+                handleIncomingAudio(data);
+            } else {
+                // Handle text data (JSON)
+                const jsonData = JSON.parse(data);
+                handlePipecatMessage(jsonData);
+            }
+        } catch (error) {
+            console.error('Error processing WebSocket message:', error);
+        }
+    };
+}
+
+// Initialize media devices and UI elements
 function initializeMediaDevices() {
     // Set up event listeners for control buttons
     toggleMicBtn.addEventListener('click', toggleMicrophone);
@@ -60,6 +98,9 @@ function initializeMediaDevices() {
     
     // Disable end session button until connected
     endSessionBtn.disabled = true;
+    
+    // Initialize the audio visualizer
+    initializeAudioVisualizer();
 }
 
 // Toggle microphone on/off
@@ -76,11 +117,6 @@ function toggleMicrophone() {
         toggleMicBtn.textContent = 'Stop';
         toggleMicBtn.classList.add('active');
         audioEnabled = true;
-        
-        // Signal to the server that the session has started
-        if (socket && socket.connected) {
-            socket.emit('start_session');
-        }
     }
 }
 
@@ -98,9 +134,9 @@ function endSession() {
     // Update status
     audioEnabled = false;
     
-    // Disconnect socket
-    if (socket) {
-        socket.disconnect();
+    // Close WebSocket connection
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.close();
     }
     
     addMessageToTranscript('System', 'Session ended', 'system');
@@ -265,9 +301,10 @@ function setupAudioProcessing() {
             console.log('Sending audio blob to server, size:', audioBlob.size);
             sendAudioToServer(audioBlob);
             audioChunks = [];
-        } else if (isStreamingAudio) {
-            // In streaming mode, signal the end of the stream
-            socket.emit('end_audio_stream');
+        } else if (isStreamingAudio && websocket && websocket.readyState === WebSocket.OPEN) {
+            // In streaming mode, signal the end of the stream by sending an empty chunk
+            const emptyChunk = new Blob([], { type: 'audio/webm' });
+            websocket.send(emptyChunk);
         }
         
         // Restart recording if AI is still enabled
@@ -280,9 +317,9 @@ function setupAudioProcessing() {
         }
     };
     
-    // Start streaming audio
+    // Start streaming audio to Pipecat WebSocket server
     startAudioStreaming();
-    console.log('Started real-time audio streaming');
+    console.log('Started real-time audio streaming with Pipecat');
 }
 
 
@@ -507,6 +544,13 @@ function stopAudioStreaming() {
         mediaRecorder.stop();
         isRecording = false;
     }
+    
+    // Send an empty audio chunk to signal the end of audio streaming
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+        // Create an empty audio chunk to signal the end of streaming
+        const emptyChunk = new Blob([], { type: 'audio/webm' });
+        websocket.send(emptyChunk);
+    }
 }
 
 // Send audio to the server for processing (batch mode)
@@ -522,57 +566,70 @@ function sendAudioToServer(audioBlob) {
     }
 }
 
-// Send audio chunk to server for real-time streaming
+// Send audio chunk to Pipecat WebSocket server for real-time streaming
 function sendAudioChunkToServer(audioChunk) {
-    if (socket && socket.connected) {
-        // Convert chunk to base64 to send over socket.io
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const base64Audio = reader.result.split(',')[1];
-            // Send both the audio data and the format information
-            socket.emit('audio_chunk', {
-                data: base64Audio,
-                format: audioChunk.type || 'audio/webm' // Include the MIME type
-            });
-            
-            // Log less frequently to reduce console spam
-            if (Math.random() < 0.1) { // Only log about 10% of chunks
-                console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
-            }
-        };
-        reader.readAsDataURL(audioChunk);
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+        // Send the raw audio blob directly to the WebSocket server
+        // Pipecat expects binary audio data, not base64
+        websocket.send(audioChunk);
+        
+        // Log less frequently to reduce console spam
+        if (Math.random() < 0.05) { // Only log about 5% of chunks
+            console.log('Sending audio chunk with format:', audioChunk.type || 'audio/webm');
+        }
     }
 }
 
-// Handle AI response from the server (legacy batch mode)
-function handleAiResponse(data) {
-    console.log('Received AI response:', data);
-    if (data.text) {
-        console.log('Adding AI response to transcript:', data.text);
-        addMessageToTranscript('AI Operator', data.text, 'ai');
-    }
+// Handle incoming audio from Pipecat
+function handleIncomingAudio(audioBlob) {
+    // Create an audio URL and play it
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
     
-    if (data.audio) {
-        // Play the audio response
-        const audioBlob = base64ToBlob(data.audio, 'audio/mpeg');
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-        audio.play();
+    // Play the audio
+    audio.oncanplaythrough = () => {
+        audio.play()
+            .catch(error => console.error('Error playing audio:', error));
+    };
+    
+    // Clean up URL object after playing
+    audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+    };
+}
+
+// Handle Pipecat JSON messages
+function handlePipecatMessage(message) {
+    console.log('Received Pipecat message:', message);
+    
+    // Handle different message types based on the frame type
+    if (message.frame_type === 'text') {
+        // Handle text frames (transcripts or AI responses)
+        handlePipecatTextFrame(message);
+    } else if (message.frame_type === 'end') {
+        // Handle end of conversation
+        console.log('Conversation ended by server');
+        endSession();
     }
 }
 
-// Handle partial transcript from the server
-function handlePartialTranscript(data) {
-    const { text, is_final } = data;
+// Handle Pipecat text frames
+function handlePipecatTextFrame(message) {
+    if (!message.text) return;
     
-    if (text) {
-        if (is_final) {
+    // Determine if this is a user transcript or AI response based on metadata
+    if (message.metadata && message.metadata.source === 'stt') {
+        // This is a transcript of user speech
+        if (message.metadata.is_final) {
             // Final transcript, add to the transcript area
-            addMessageToTranscript('You', text, 'user');
+            addMessageToTranscript('You', message.text, 'user');
         } else {
             // Partial transcript, update a temporary area
-            updatePartialTranscript(text);
+            updatePartialTranscript(message.text);
         }
+    } else if (message.metadata && message.metadata.source === 'llm') {
+        // This is an AI response
+        addMessageToTranscript('AI Operator', message.text, 'ai');
     }
 }
 
@@ -946,13 +1003,10 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(config => {
             window.botDisplayName = config.bot_display_name;
             
-            // Initialize Socket.IO connection
-            initializeSocket();
+            // Initialize Pipecat WebSocket connection
+            initializeWebSocket();
             
-            // Initialize audio visualizer immediately
-            initializeAudioVisualizer();
-            
-            // Initialize media devices
+            // Initialize media devices (which also initializes the audio visualizer)
             initializeMediaDevices();
             
             // Enable AI operator
@@ -960,14 +1014,12 @@ document.addEventListener('DOMContentLoaded', () => {
             updateAiStatus(true);
             
             // Add welcome message to transcript
-            addMessageToTranscript('System', 'Application initialized. Click "Start Microphone" to begin.', 'system');
+            addMessageToTranscript('System', 'Application initialized. Click "Start" to begin.', 'system');
         })
         .catch(error => {
             console.error('Error fetching configuration:', error);
             addMessageToTranscript('System', 'Error initializing application. Please reload the page.', 'system');
         });
-    
-    // AI is always enabled by default
 });
 
 // Initialize audio visualizer without waiting for audio stream

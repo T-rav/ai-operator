@@ -10,3 +10,6 @@ python-socketio==5.8.0
 eventlet==0.33.3
 pyjwt==2.8.0
 pydub==0.25.1
+pipecat>=0.3.0
+loguru>=0.7.2
+protobuf>=4.25.1
