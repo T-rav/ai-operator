@@ -1,8 +1,9 @@
 # Web server
-fastapi==0.109.2
+fastapi~=0.115.6  # Required by pipecat-ai[websocket]
 uvicorn==0.27.1
 jinja2==3.1.2  # For templating
 python-multipart==0.0.9  # For form data processing
+websockets~=13.1  # Required for WebSocket support
 
 # Environment and configuration
 python-dotenv==1.0.0
@@ -18,7 +19,7 @@ aiohttp~=3.11.12  # Required by pipecat-ai
 numpy~=1.26.4  # Required by pipecat-ai
 
 # Pipecat framework for audio pipeline
-pipecat-ai==0.0.62  # Latest available version
+pipecat-ai[websocket]==0.0.62  # Latest available version with WebSocket support
 
 # Utilities
 loguru>=0.7.2

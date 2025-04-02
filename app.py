@@ -1,13 +1,21 @@
 import os
 import sys
 import asyncio
-import threading
 from dotenv import load_dotenv
 from loguru import logger
+from fastapi import FastAPI, WebSocket
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from fastapi import Request
 
-# Import our modularized components
-from modules.pipeline_manager import start_pipeline
-from modules.web_app import run_web_app
+from pipecat.transports.network.fastapi_websocket import (
+    FastAPIWebsocketTransport,
+    FastAPIWebsocketParams
+)
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.serializers.twilio import TwilioFrameSerializer
 
 # Load environment variables
 load_dotenv('.env')
@@ -20,25 +28,57 @@ logger.add(sys.stderr, level="INFO")
 bot_display_name = os.getenv('BOT_DISPLAY_NAME', 'AI Operator')
 voice_model = os.getenv('VOICE_MODEL', 'tts-1')
 voice_voice = os.getenv('VOICE_VOICE', 'alloy')
-llm_model = os.getenv('LLM_MODEL', 'gpt-4o')
+llm_model = os.getenv('LLM_MODEL', 'gpt-4')
 
-# Run the Flask app and Pipecat WebSocket server
+# Initialize FastAPI app
+app = FastAPI()
+
+# Mount static files and templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "bot_name": bot_display_name}
+    )
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    
+    # Configure transport with VAD and audio output
+    transport = FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
+            serializer=TwilioFrameSerializer(),
+        )
+    )
+
+    # Create pipeline with the transport
+    pipeline = Pipeline([
+        transport.input(),    # Handle incoming audio
+        stt,                  # Speech-to-text
+        llm,                  # Language model
+        tts,                  # Text-to-speech
+        transport.output()    # Handle outgoing audio
+    ])
+
+    # Run pipeline
+    task = PipelineTask(pipeline)
+    await PipelineRunner().run(task)
+
 if __name__ == '__main__':
-    # Flask web server settings
+    import uvicorn
+    
+    # Server settings
     host = os.getenv('HOST', '0.0.0.0')
     port = int(os.getenv('PORT', 5001))
-    websocket_port = int(os.getenv('WEBSOCKET_PORT', 8765))
     
-    # Start the web app in a separate thread
-    web_thread = threading.Thread(
-        target=run_web_app,
-        args=(host, port, bot_display_name)
-    )
-    web_thread.daemon = True
-    web_thread.start()
-    
-    logger.info(f"Web app running on http://{host}:{port}")
-    logger.info(f"WebSocket server will run on ws://{host}:{websocket_port}/ws")
-    
-    # Run the Pipecat pipeline
-    asyncio.run(start_pipeline(bot_display_name, voice_model, voice_voice, llm_model))
+    logger.info(f"Starting server on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port)
