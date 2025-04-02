@@ -3,11 +3,21 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 def create_app(bot_display_name):
     """Create and configure the FastAPI application"""
     app = FastAPI(title="AI Operator")
+    
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     
     # Mount static files directory
     app.mount("/static", StaticFiles(directory="static"), name="static")
