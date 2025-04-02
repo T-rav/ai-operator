@@ -224,10 +224,10 @@
         visualizerCtx.fillStyle = '#f5f7fa';
         visualizerCtx.fillRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
 
-        // Draw waveform (green)
+        // Draw waveform (blue)
         analyser.getByteTimeDomainData(dataArray);
         visualizerCtx.lineWidth = 2;
-        visualizerCtx.strokeStyle = 'rgb(0, 255, 0)';
+        visualizerCtx.strokeStyle = '#3498db';
         visualizerCtx.beginPath();
         drawWaveform(dataArray, visualizerCtx);
         visualizerCtx.stroke();
