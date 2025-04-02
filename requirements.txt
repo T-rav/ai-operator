@@ -19,7 +19,7 @@ pyaudio==0.2.13
 numpy~=1.26.4  # Required by pipecat-ai
 
 # Pipecat framework for audio pipeline
-pipecat-ai==0.0.62.dev125  # Specific development version
+pipecat-ai==0.0.62  # Latest available version
 
 # Utilities
 loguru>=0.7.2
