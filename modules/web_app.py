@@ -10,10 +10,10 @@ def create_app(bot_display_name):
     app = FastAPI(title="AI Operator")
     
     # Mount static files directory
-    app.mount("/static", StaticFiles(directory="../static"), name="static")
+    app.mount("/static", StaticFiles(directory="static"), name="static")
     
     # Set up templates
-    templates = Jinja2Templates(directory="../templates")
+    templates = Jinja2Templates(directory="templates")
     
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -33,7 +33,7 @@ def create_app(bot_display_name):
     
     return app
 
-def run_fastapi_app(host, port, bot_display_name):
-    """Run the FastAPI application"""
+def run_web_app(host, port, bot_display_name):
+    """Run the web application"""
     app = create_app(bot_display_name)
     uvicorn.run(app, host=host, port=port, log_level="info")
