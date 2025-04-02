@@ -124,33 +124,8 @@ function connectWebSocket() {
             webmHeader = null;
             isFirstChunk = true;
             
-            // Send a handshake message to initialize the connection
-            // Format: [1-byte message type][4-byte length][JSON data]
-            // Message type 0 = handshake
-            
-            const handshakeData = JSON.stringify({
-                client: 'web-browser',
-                format: 'webm',
-                sampleRate: 24000,
-                timestamp: Date.now()
-            });
-            
-            const handshakeBytes = new TextEncoder().encode(handshakeData);
-            const handshakeBuffer = new ArrayBuffer(1 + 4 + handshakeBytes.length);
-            const handshakeView = new DataView(handshakeBuffer);
-            
-            // Set message type (0 = handshake)
-            handshakeView.setUint8(0, 0);
-            
-            // Set data length (4 bytes, little endian)
-            handshakeView.setUint32(1, handshakeBytes.length, true);
-            
-            // Copy handshake data after the header
-            new Uint8Array(handshakeBuffer).set(handshakeBytes, 5);
-            
-            // Send the handshake message
-            websocket.send(handshakeBuffer);
-            console.log('WebSocket connection established, sent handshake message');
+            // Revert to sending raw WebM audio data
+            console.log('WebSocket connection established, ready to send audio data');
             
             // Start sending audio immediately if we're in streaming mode
             if (isStreamingAudio && mediaRecorder && mediaRecorder.state !== 'recording') {
@@ -271,8 +246,6 @@ function toggleMicrophone() {
     }
 }
 
-
-
 // End the current session
 function endSession() {
     // Stop all media tracks
@@ -370,8 +343,6 @@ function stopAudioCapture() {
     }
 }
 
-
-
 // Setup audio processing for streaming to the server
 function setupAudioProcessing() {
     console.log('Setting up audio processing...');
@@ -433,7 +404,7 @@ function setupAudioProcessing() {
         } else {
             // Last resort fallback
             console.log('No WebM support detected - Pipecat requires WebM format');
-            options = { audioBitsPerSecond: 128000 };
+            options = { audioBitsPerSecond: 16000 };
         }
     } catch (e) {
         console.error('Error checking audio format support:', e);
@@ -446,11 +417,9 @@ function setupAudioProcessing() {
     mediaRecorder.ondataavailable = event => {
         if (event.data.size > 0) {
             if (isStreamingAudio) {
-                // In streaming mode, immediately send each chunk
-                // Ensure we're sending WebM format by explicitly creating a new Blob
-                const webmBlob = new Blob([event.data], { type: 'audio/webm' });
-                console.log('Audio chunk ready, size:', webmBlob.size, 'bytes, type:', webmBlob.type);
-                sendAudioChunkToServer(webmBlob);
+                // Send raw WebM audio data directly to Pipecat
+                const audioBlob = new Blob([event.data], { type: 'audio/webm;codecs=opus' });
+                websocket.send(audioBlob);
             } else {
                 // In batch mode, collect chunks
                 audioChunks.push(event.data);
@@ -481,12 +450,10 @@ function setupAudioProcessing() {
         }
     };
     
-    // Start streaming audio to Pipecat WebSocket server
+    // Start streaming audio to server in real-time
     startAudioStreaming();
     console.log('Started real-time audio streaming with Pipecat');
 }
-
-
 
 // Setup audio visualizer
 function setupAudioVisualizer(stream) {
@@ -841,42 +808,8 @@ function sendAudioChunkToServer(audioChunk) {
                         dataToSend = audioData;
                     }
                     
-                    // Format audio data for Pipecat using a simple binary format
-                    // Structure: [1-byte message type][4-byte length][audio data]
-                    // Message type 1 = audio data
-                    
-                    // Create a buffer with space for the header + audio data
-                    const audioBytes = new Uint8Array(dataToSend);
-                    const messageBuffer = new ArrayBuffer(1 + 4 + audioBytes.length);
-                    const messageView = new DataView(messageBuffer);
-                    
-                    // Set message type (1 = audio data)
-                    messageView.setUint8(0, 1);
-                    
-                    // Set data length (4 bytes, little endian)
-                    messageView.setUint32(1, audioBytes.length, true);
-                    
-                    // Copy audio data after the header
-                    new Uint8Array(messageBuffer).set(audioBytes, 5);
-                    
-                    // Add a small delay between chunks to prevent overwhelming the server
-                    const now = Date.now();
-                    const timeSinceLastChunk = now - lastSentChunkTime;
-                    
-                    if (timeSinceLastChunk < 50) {
-                        // If we're sending chunks too quickly, add a small delay
-                        setTimeout(() => {
-                            if (websocket && websocket.readyState === WebSocket.OPEN && isStreamingAudio) {
-                                // Send the formatted binary message
-                                websocket.send(messageBuffer);
-                                lastSentChunkTime = Date.now();
-                            }
-                        }, 50 - timeSinceLastChunk);
-                    } else {
-                        // Send immediately if we're not sending too quickly
-                        websocket.send(messageBuffer);
-                        lastSentChunkTime = now;
-                    }
+                    // Send raw WebM audio data directly to Pipecat
+                    websocket.send(dataToSend);
                     
                     // Log less frequently to reduce console spam
                     if (Math.random() < 0.01) { // Only log about 1% of chunks
@@ -1220,8 +1153,6 @@ function handleStreamingAudio(data) {
     }
 }
 
-
-
 // Play the next audio chunk in the queue
 function playNextAudioChunk() {
     if (audioQueue.length === 0) {
@@ -1446,4 +1377,4 @@ function initializeAudioVisualizer() {
     
     // Start drawing
     drawAudioVisualizer();
-}
+};
