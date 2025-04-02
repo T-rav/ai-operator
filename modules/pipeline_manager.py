@@ -2,12 +2,10 @@ import os
 import asyncio
 from loguru import logger
 
-from pipecat.frames.frames import BotInterruptionFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.services.openai.llm import OpenAILLMService
@@ -31,29 +29,28 @@ class PipelineManager:
         
     def initialize_transport(self):
         """Initialize the WebSocket transport for real-time audio streaming"""
+        from pipecat.serializers.protobuf import ProtobufFrameSerializer
+        
+        # Create a WebSocket transport with minimal configuration
         self.transport = WebsocketServerTransport(
             params=WebsocketServerParams(
-                host="0.0.0.0",          # Listen on all interfaces for better compatibility
+                host="0.0.0.0",
                 port=int(os.getenv("WEBSOCKET_PORT", "8765")),
-                path="/ws",              # Explicitly set the WebSocket path
+                path="/ws",
                 serializer=ProtobufFrameSerializer(),
-                audio_out_enabled=True,  # Enable audio output
-                add_wav_header=True,     # Add WAV header to audio chunks
-                vad_enabled=False,       # Disable VAD to simplify processing
-                session_timeout=600,     # 10 minutes timeout for longer sessions
-                audio_sample_rate=16000, # Match the client's audio sample rate
-                debug=True,              # Enable debug logging
-                raw_audio_mode=True,     # Accept raw audio data without protocol buffers
-                audio_format="webm",     # Treat incoming audio as WebM format
-                binary_ping=False,       # Use text pings instead of binary
-                accept_raw_audio=True,   # Accept raw audio data from browsers
-                max_message_size=10485760, # 10MB max message size
-                ping_interval=10,        # Send ping every 10 seconds
-                ping_timeout=30,         # 30 seconds ping timeout
+                audio_out_enabled=True,
+                add_wav_header=False,
+                vad_enabled=False,
+                session_timeout=600,
+                audio_sample_rate=24000,  # Required by OpenAI TTS
+                debug=True,
+                raw_audio_mode=True,      # Accept raw audio data
+                audio_format="webm",      # Specify WebM format
+                accept_raw_audio=True     # Accept raw audio from browsers
             )
         )
         
-        logger.info("WebSocket transport initialized with custom handler for raw audio data")
+        logger.info("WebSocket transport initialized for WebM audio")
         return self.transport
         
     def initialize_services(self):
@@ -63,7 +60,8 @@ class PipelineManager:
         self.tts = OpenAITTSService(
             api_key=os.getenv("OPENAI_API_KEY"),
             voice=self.voice_voice,
-            model=self.voice_model
+            model=self.voice_model,
+            sample_rate=24000  # Explicitly set to 24000Hz as required by OpenAI TTS
         )
         
         return llm, stt, self.tts
@@ -101,7 +99,7 @@ class PipelineManager:
             ]
         )
         
-        # Create a pipeline task
+        # Create a pipeline task with parameters optimized for browser WebM audio
         self.task = PipelineTask(
             pipeline,
             params=PipelineParams(
@@ -110,6 +108,7 @@ class PipelineManager:
                 allow_interruptions=True,    # Allow user to interrupt the assistant
                 audio_format="webm",         # Explicitly set audio format to WebM
                 raw_audio_mode=True,        # Accept raw audio data from browsers
+                accept_raw_audio=True,      # Explicitly accept raw audio
             ),
         )
         
@@ -149,7 +148,7 @@ class PipelineManager:
         messages = self.create_context()
         
         # Setup pipeline
-        self.setup_pipeline(messages)
+        self.task = self.setup_pipeline(messages)
         
         # Create a pipeline runner and run the task
         self.runner = PipelineRunner()

@@ -124,8 +124,33 @@ function connectWebSocket() {
             webmHeader = null;
             isFirstChunk = true;
             
-            // Don't send any handshake message - Pipecat expects binary audio data only
-            console.log('WebSocket connection established, ready to send audio data');
+            // Send a handshake message to initialize the connection
+            // Format: [1-byte message type][4-byte length][JSON data]
+            // Message type 0 = handshake
+            
+            const handshakeData = JSON.stringify({
+                client: 'web-browser',
+                format: 'webm',
+                sampleRate: 24000,
+                timestamp: Date.now()
+            });
+            
+            const handshakeBytes = new TextEncoder().encode(handshakeData);
+            const handshakeBuffer = new ArrayBuffer(1 + 4 + handshakeBytes.length);
+            const handshakeView = new DataView(handshakeBuffer);
+            
+            // Set message type (0 = handshake)
+            handshakeView.setUint8(0, 0);
+            
+            // Set data length (4 bytes, little endian)
+            handshakeView.setUint32(1, handshakeBytes.length, true);
+            
+            // Copy handshake data after the header
+            new Uint8Array(handshakeBuffer).set(handshakeBytes, 5);
+            
+            // Send the handshake message
+            websocket.send(handshakeBuffer);
+            console.log('WebSocket connection established, sent handshake message');
             
             // Start sending audio immediately if we're in streaming mode
             if (isStreamingAudio && mediaRecorder && mediaRecorder.state !== 'recording') {
@@ -816,8 +841,23 @@ function sendAudioChunkToServer(audioChunk) {
                         dataToSend = audioData;
                     }
                     
-                    // Pipecat expects raw binary audio data, not JSON
-                    // No need to wrap the audio data in a JSON message
+                    // Format audio data for Pipecat using a simple binary format
+                    // Structure: [1-byte message type][4-byte length][audio data]
+                    // Message type 1 = audio data
+                    
+                    // Create a buffer with space for the header + audio data
+                    const audioBytes = new Uint8Array(dataToSend);
+                    const messageBuffer = new ArrayBuffer(1 + 4 + audioBytes.length);
+                    const messageView = new DataView(messageBuffer);
+                    
+                    // Set message type (1 = audio data)
+                    messageView.setUint8(0, 1);
+                    
+                    // Set data length (4 bytes, little endian)
+                    messageView.setUint32(1, audioBytes.length, true);
+                    
+                    // Copy audio data after the header
+                    new Uint8Array(messageBuffer).set(audioBytes, 5);
                     
                     // Add a small delay between chunks to prevent overwhelming the server
                     const now = Date.now();
@@ -827,14 +867,14 @@ function sendAudioChunkToServer(audioChunk) {
                         // If we're sending chunks too quickly, add a small delay
                         setTimeout(() => {
                             if (websocket && websocket.readyState === WebSocket.OPEN && isStreamingAudio) {
-                                // Send the audio data directly as binary
-                                websocket.send(dataToSend);
+                                // Send the formatted binary message
+                                websocket.send(messageBuffer);
                                 lastSentChunkTime = Date.now();
                             }
                         }, 50 - timeSinceLastChunk);
                     } else {
                         // Send immediately if we're not sending too quickly
-                        websocket.send(dataToSend);
+                        websocket.send(messageBuffer);
                         lastSentChunkTime = now;
                     }
                     
