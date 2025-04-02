@@ -219,15 +219,21 @@
         if (!analyser || !isPlaying) return;
 
         animationFrame = requestAnimationFrame(drawVisualizer);
-        analyser.getByteTimeDomainData(dataArray);
-
+        
+        // Clear canvas
         visualizerCtx.fillStyle = 'rgb(0, 0, 0)';
         visualizerCtx.fillRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
 
+        // Draw waveform (green)
+        analyser.getByteTimeDomainData(dataArray);
         visualizerCtx.lineWidth = 2;
         visualizerCtx.strokeStyle = 'rgb(0, 255, 0)';
         visualizerCtx.beginPath();
+        drawWaveform(dataArray, visualizerCtx);
+        visualizerCtx.stroke();
+      }
 
+      function drawWaveform(dataArray, ctx) {
         const sliceWidth = visualizerCanvas.width / dataArray.length;
         let x = 0;
 
@@ -236,16 +242,15 @@
           const y = v * visualizerCanvas.height / 2;
 
           if (i === 0) {
-            visualizerCtx.moveTo(x, y);
+            ctx.moveTo(x, y);
           } else {
-            visualizerCtx.lineTo(x, y);
+            ctx.lineTo(x, y);
           }
 
           x += sliceWidth;
         }
 
-        visualizerCtx.lineTo(visualizerCanvas.width, visualizerCanvas.height / 2);
-        visualizerCtx.stroke();
+        ctx.lineTo(visualizerCanvas.width, visualizerCanvas.height / 2);
       }
 
       const proto = protobuf.load('frames.proto', (err, root) => {
@@ -290,15 +295,17 @@
               // 512 is closest thing to 200ms.
               scriptProcessor = audioContext.createScriptProcessor(512, 1, 1);
               source = audioContext.createMediaStreamSource(stream);
-              source.connect(scriptProcessor);
-              scriptProcessor.connect(audioContext.destination);
-
-              // Set up visualizer
+              
+              // Set up visualizer for input
               analyser = audioContext.createAnalyser();
               analyser.fftSize = 2048;
               source.connect(analyser);
               dataArray = new Uint8Array(analyser.frequencyBinCount);
               drawVisualizer();
+
+              // Connect input to script processor and destination
+              source.connect(scriptProcessor);
+              scriptProcessor.connect(audioContext.destination);
 
               scriptProcessor.onaudioprocess = (event) => {
                   if (!ws) {
@@ -349,8 +356,12 @@
           audioContext.decodeAudioData(audioArray.buffer, function(buffer) {
               const source = new AudioBufferSourceNode(audioContext);
               source.buffer = buffer;
-              source.start(playTime);
+              
+              // Connect output to analyzer and destination
+              source.connect(analyser);
               source.connect(audioContext.destination);
+              
+              source.start(playTime);
               playTime = playTime + buffer.duration;
           });
       }
