@@ -647,24 +647,6 @@ function startAudioStreaming() {
     }
 }
 
-// Start the actual audio recording process
-function startAudioRecording() {
-    // Use a shorter timeslice (50ms) to get more frequent ondataavailable events
-    // This allows for more real-time streaming with lower latency
-    mediaRecorder.start(50);
-    
-    // Set a longer timeout for streaming mode (30 seconds)
-    // This gives more time for natural conversation pauses
-    clearTimeout(streamingInterval);
-    streamingInterval = setTimeout(() => {
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
-            console.log('Stopping streaming after timeout...');
-            mediaRecorder.stop();
-            isRecording = false;
-        }
-    }, 30000);
-}
-
 // Stop audio streaming
 function stopAudioStreaming() {
     console.log('Stopping audio streaming...');
@@ -723,101 +705,11 @@ function sendAudioToServer(audioBlob) {
     }
 }
 
-// WebM header storage for proper audio format handling
-let webmHeader = null;
-let isFirstChunk = true;
+// Audio streaming variables
 let consecutiveErrors = 0;
 let reconnectAttempts = 0;
-let lastSentChunkTime = 0;
 
-// Send audio chunk to Pipecat WebSocket server for real-time streaming
-function sendAudioChunkToServer(audioChunk) {
-    if (!isStreamingAudio) {
-        console.log('Audio streaming is inactive, not sending chunk');
-        return;
-    }
-    
-    if (websocket && websocket.readyState === WebSocket.OPEN) {
-        try {
-            // Reset consecutive errors counter on successful connection
-            consecutiveErrors = 0;
-            
-            // Convert the Blob to ArrayBuffer for processing
-            const reader = new FileReader();
-            
-            reader.onload = function() {
-                try {
-                    // Get the ArrayBuffer from the reader result
-                    const audioData = reader.result;
-                    
-                    // Handle WebM header for proper audio format
-                    if (isFirstChunk) {
-                        // Store the WebM header from the first chunk
-                        webmHeader = audioData.slice(0, 4000); // Store enough bytes to capture the header
-                        isFirstChunk = false;
-                        console.log('Stored WebM header from first chunk');
-                        
-                        // No handshake message - Pipecat expects binary data only
-                        console.log('First chunk ready, sending with WebM header');
-                    }
-                    
-                    // Ensure the audio data has a valid WebM header
-                    let dataToSend;
-                    if (webmHeader && !hasValidWebMHeader(new Uint8Array(audioData))) {
-                        // If this chunk is missing the header, prepend the stored header
-                        const combinedBuffer = new Uint8Array(webmHeader.byteLength + audioData.byteLength);
-                        combinedBuffer.set(new Uint8Array(webmHeader), 0);
-                        combinedBuffer.set(new Uint8Array(audioData), webmHeader.byteLength);
-                        dataToSend = combinedBuffer.buffer;
-                        console.log('Added WebM header to chunk');
-                    } else {
-                        // This chunk already has a valid header
-                        dataToSend = audioData;
-                    }
-                    
-                    // Send raw WebM audio data directly to Pipecat
-                    // Pipecat expects raw binary data, not wrapped in a Blob
-                    websocket.send(dataToSend);
-                    
-                    // Log less frequently to reduce console spam
-                    if (Math.random() < 0.01) { // Only log about 1% of chunks
-                        console.log('Sent audio chunk, size:', dataToSend.byteLength, 'bytes');
-                    }
-                } catch (error) {
-                    console.error('Error sending audio data:', error);
-                    consecutiveErrors++;
-                    
-                    if (consecutiveErrors > 5) {
-                        console.error('Too many consecutive errors, reconnecting WebSocket...');
-                        reconnectWebSocket();
-                    }
-                }
-            };
-            
-            reader.onerror = function() {
-                console.error('Error reading audio chunk as ArrayBuffer');
-                consecutiveErrors++;
-            };
-            
-            // Start reading the Blob as an ArrayBuffer
-            reader.readAsArrayBuffer(audioChunk);
-        } catch (error) {
-            console.error('Error processing audio chunk:', error);
-            consecutiveErrors++;
-            
-            if (consecutiveErrors > 5) {
-                console.error('Too many consecutive errors, reconnecting WebSocket...');
-                reconnectWebSocket();
-            }
-        }
-    } else if (!websocket || websocket.readyState === WebSocket.CLOSED || websocket.readyState === WebSocket.CLOSING) {
-        // Try to reconnect if the websocket is closed
-        console.log('WebSocket is closed or closing, attempting to reconnect...');
-        reconnectWebSocket();
-    } else if (websocket.readyState === WebSocket.CONNECTING) {
-        console.log('WebSocket is still connecting, waiting...');
-    }
-}
+// This function has been removed as it's no longer needed with PCM audio processing
 
 // Force reconnect the WebSocket
 function reconnectWebSocket() {
@@ -848,11 +740,7 @@ function reconnectWebSocket() {
 }
 
 // Check if the audio data has a valid WebM header
-function hasValidWebMHeader(data) {
-    // Simple check for WebM header signature
-    // WebM files start with the EBML header (0x1A 0x45 0xDF 0xA3)
-    return data.length >= 4 && data[0] === 0x1A && data[1] === 0x45 && data[2] === 0xDF && data[3] === 0xA3;
-}
+// This function has been removed as it's no longer needed with PCM audio processing
 
 // Handle incoming audio from Pipecat
 function handleIncomingAudio(audioData) {

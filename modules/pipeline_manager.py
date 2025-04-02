@@ -14,8 +14,6 @@ from pipecat.transports.network.websocket_server import (
     WebsocketServerTransport,
 )
 
-from modules.session_timeout_handler import SessionTimeoutHandler
-
 class PipelineManager:
     def __init__(self, bot_display_name, voice_model, voice_voice, llm_model):
         self.bot_display_name = bot_display_name
@@ -40,8 +38,9 @@ class PipelineManager:
                 path="/ws",
                 serializer=ProtobufFrameSerializer(),  # Required parameter
                 debug=True,
-                binary_mode=True,  # Accept binary data directly
-                audio_sample_rate=24000  # Required by OpenAI TTS
+                binary_mode=True,  # Accept binary PCM data directly
+                audio_sample_rate=24000,  # Required by OpenAI TTS
+                audio_format="pcm"  # Specify PCM format for incoming audio
             )
         )
         

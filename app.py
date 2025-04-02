@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 from loguru import logger
 
 # Import our modularized components
-from modules.session_timeout_handler import SessionTimeoutHandler
-from modules.websocket_handler import CustomWebSocketHandler
 from modules.pipeline_manager import start_pipeline
 from modules.flask_app import run_flask_app
 
