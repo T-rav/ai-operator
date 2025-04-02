@@ -7,7 +7,7 @@ from loguru import logger
 
 # Import our modularized components
 from modules.pipeline_manager import start_pipeline
-from modules.flask_app import run_flask_app
+from modules.fastapi_app import run_fastapi_app
 
 # Load environment variables
 load_dotenv('.env')
@@ -29,15 +29,15 @@ if __name__ == '__main__':
     port = int(os.getenv('PORT', 5001))
     websocket_port = int(os.getenv('WEBSOCKET_PORT', 8765))
     
-    # Start the Flask app in a separate thread
-    flask_thread = threading.Thread(
-        target=run_flask_app,
+    # Start the FastAPI app in a separate thread
+    fastapi_thread = threading.Thread(
+        target=run_fastapi_app,
         args=(host, port, bot_display_name)
     )
-    flask_thread.daemon = True
-    flask_thread.start()
+    fastapi_thread.daemon = True
+    fastapi_thread.start()
     
-    logger.info(f"Flask app running on http://{host}:{port}")
+    logger.info(f"FastAPI app running on http://{host}:{port}")
     logger.info(f"WebSocket server will run on ws://{host}:{websocket_port}/ws")
     
     # Run the Pipecat pipeline
