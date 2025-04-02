@@ -29,14 +29,19 @@ function initializeWebSocket() {
     fetch('/api/config')
         .then(response => response.json())
         .then(config => {
-            websocketUrl = config.websocket_url;
+            // Use the current window location to construct the WebSocket URL
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            websocketUrl = `${protocol}//${host}/ws`;
             console.log('WebSocket URL:', websocketUrl);
             connectWebSocket();
         })
         .catch(error => {
             console.error('Error fetching config:', error);
-            // Use default WebSocket URL if config fetch fails
-            websocketUrl = `ws://${window.location.hostname}:8765/ws`;
+            // Use the current window location as fallback
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            websocketUrl = `${protocol}//${host}/ws`;
             connectWebSocket();
         });
 }
@@ -49,20 +54,6 @@ function connectWebSocket() {
     if (websocket && websocket.readyState !== WebSocket.CLOSED) {
         console.log('WebSocket already connected, state:', websocket.readyState);
         return;
-    }
-    
-    // If the URL contains 0.0.0.0, replace it with localhost
-    if (websocketUrl.includes('0.0.0.0')) {
-        websocketUrl = websocketUrl.replace('0.0.0.0', 'localhost');
-        console.log('Adjusted WebSocket URL to use localhost:', websocketUrl);
-    }
-    
-    // Ensure the URL has the correct format
-    if (!websocketUrl.startsWith('ws://')) {
-        websocketUrl = 'ws://' + websocketUrl;
-    }
-    if (!websocketUrl.endsWith('/ws')) {
-        websocketUrl = websocketUrl.endsWith('/') ? websocketUrl + 'ws' : websocketUrl + '/ws';
     }
     
     console.log('Connecting to WebSocket server at:', websocketUrl);
@@ -90,15 +81,14 @@ function connectWebSocket() {
             if (websocket && websocket.readyState === WebSocket.CONNECTING) {
                 console.error('WebSocket connection timeout');
                 websocket.close();
-                // Try with a fallback URL
-                websocketUrl = `ws://localhost:8765/ws`;
+                // Try reconnecting after a delay
                 setTimeout(connectWebSocket, 1000);
             }
         }, 5000);
         
         websocket.onopen = (event) => {
             clearTimeout(connectionTimeout);
-            console.log('Connected to Pipecat WebSocket server', event);
+            console.log('WebSocket connected successfully');
             updateAiStatus(true);
             
             // Reset error counters on successful connection
