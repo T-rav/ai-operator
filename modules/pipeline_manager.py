@@ -97,10 +97,10 @@ class PipelineManager:
         self.task = PipelineTask(
             pipeline,
             params=PipelineParams(
-                audio_in_sample_rate=16000,  # Sample rate for input audio
-                audio_out_sample_rate=16000, # Sample rate for output audio
+                audio_in_sample_rate=24000,  # Sample rate for input audio
+                audio_out_sample_rate=24000, # Sample rate for output audio
                 allow_interruptions=True,    # Allow user to interrupt the assistant
-                audio_format="webm",         # Explicitly set audio format to WebM
+                audio_format="pcm",         # Use PCM format consistently
                 raw_audio_mode=True,        # Accept raw audio data from browsers
                 accept_raw_audio=True,      # Explicitly accept raw audio
             ),

@@ -32,21 +32,6 @@ function initializeWebSocket() {
             websocketUrl = config.websocket_url;
             console.log('WebSocket URL:', websocketUrl);
             connectWebSocket();
-            
-            // Set up a periodic ping to keep the connection alive
-            setInterval(() => {
-                if (websocket && websocket.readyState === WebSocket.OPEN) {
-                    // Send a small ping message to keep the connection alive
-                    try {
-                        // Send a simple ping message as a JSON string
-                        const pingMessage = JSON.stringify({ type: 'ping' });
-                        websocket.send(pingMessage);
-                        console.log('Sent ping to keep connection alive');
-                    } catch (error) {
-                        console.error('Error sending ping:', error);
-                    }
-                }
-            }, 30000); // Send a ping every 30 seconds
         })
         .catch(error => {
             console.error('Error fetching config:', error);
@@ -124,8 +109,8 @@ function connectWebSocket() {
             webmHeader = null;
             isFirstChunk = true;
             
-            // Revert to sending raw WebM audio data
-            console.log('WebSocket connection established, ready to send audio data');
+            // Enable the end session button
+            endSessionBtn.disabled = false;
             
             // Start sending audio immediately if we're in streaming mode
             if (isStreamingAudio && mediaRecorder && mediaRecorder.state !== 'recording') {
@@ -353,7 +338,9 @@ function setupAudioProcessing() {
         if (audioContext) {
             audioContext.close().catch(err => console.error('Error closing audio context:', err));
         }
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 24000 // Match the server's expected sample rate
+        });
         console.log('Created new audio context, state:', audioContext.state);
         
         // Resume the audio context if it's suspended (needed for some browsers)
@@ -364,53 +351,61 @@ function setupAudioProcessing() {
                 console.error('Failed to resume AudioContext:', err);
             });
         }
+        
+        // Create a media stream source from the microphone stream
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        
+        // Create an analyzer node for visualization
+        const analyzer = audioContext.createAnalyser();
+        analyzer.fftSize = 2048;
+        audioAnalyser = analyzer;
+        
+        // Create a gain node to control volume
+        const gainNode = audioContext.createGain();
+        gainNode.gain.value = 1.0;
+        
+        // Create a script processor node for audio processing
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        // Process audio data and send to server
+        processor.onaudioprocess = (e) => {
+            if (isStreamingAudio && websocket && websocket.readyState === WebSocket.OPEN) {
+                // Get raw PCM data from the audio buffer
+                const input = e.inputBuffer.getChannelData(0);
+                
+                // Convert float32 audio data to Int16 (16-bit PCM)
+                const pcm = new Int16Array(input.length);
+                for (let i = 0; i < input.length; i++) {
+                    // Scale and clamp the float32 values to int16 range
+                    pcm[i] = Math.max(-32768, Math.min(32767, Math.floor(input[i] * 32767)));
+                }
+                
+                // Send the PCM buffer directly to the server
+                websocket.send(pcm.buffer);
+                
+                // Log less frequently to reduce console spam
+                if (Math.random() < 0.01) { // Only log about 1% of chunks
+                    console.log('Sent PCM audio chunk, size:', pcm.buffer.byteLength, 'bytes');
+                }
+            }
+        };
+        
+        // Connect the nodes
+        source.connect(analyzer);
+        analyzer.connect(gainNode);
+        gainNode.connect(processor);
+        processor.connect(audioContext.destination);
+        
+        // Store the processor and source for later cleanup
+        window.audioProcessor = processor;
+        window.audioSource = source;
+        
+        // Start streaming audio to server
+        isStreamingAudio = true;
+        console.log('Started real-time audio streaming with PCM format');
     } catch (e) {
         console.error('Error initializing AudioContext:', e);
     }
-    
-    // Setup the audio visualizer
-    setupAudioVisualizer(mediaStream);
-    
-    // Create a media stream source from the microphone stream
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    
-    // Create a script processor node to process audio data
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
-    
-    // Process audio data and send to server
-    processor.onaudioprocess = (e) => {
-        if (isStreamingAudio && websocket && websocket.readyState === WebSocket.OPEN) {
-            // Get raw PCM data from the audio buffer
-            const input = e.inputBuffer.getChannelData(0);
-            
-            // Convert float32 audio data to Int16 (16-bit PCM)
-            const pcm = new Int16Array(input.length);
-            for (let i = 0; i < input.length; i++) {
-                // Scale and clamp the float32 values to int16 range
-                pcm[i] = Math.max(-32768, Math.min(32767, Math.floor(input[i] * 32767)));
-            }
-            
-            // Send the PCM buffer to the server
-            websocket.send(pcm.buffer);
-            
-            // Log less frequently to reduce console spam
-            if (Math.random() < 0.01) { // Only log about 1% of chunks
-                console.log('Sent PCM audio chunk, size:', pcm.buffer.byteLength, 'bytes');
-            }
-        }
-    };
-    
-    // Connect the nodes
-    source.connect(processor);
-    processor.connect(audioContext.destination);
-    
-    // Store the processor and source for later cleanup
-    window.audioProcessor = processor;
-    window.audioSource = source;
-    
-    // Start streaming audio to server
-    isStreamingAudio = true;
-    console.log('Started real-time audio streaming with PCM format');
 }
 
 // Setup audio visualizer
@@ -602,48 +597,25 @@ function startRecording() {
 
 // Start streaming audio to server in real-time
 function startAudioStreaming() {
-    if (mediaRecorder && mediaRecorder.state !== 'recording') {
-        console.log('Starting audio streaming...');
-        isStreamingAudio = true;
-        isRecording = true;
+    console.log('Starting audio streaming...');
+    isStreamingAudio = true;
+    
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+        console.log('WebSocket not connected, attempting to connect before streaming...');
+        connectWebSocket();
         
-        // Reset WebM header state for a new streaming session
-        webmHeader = null;
-        isFirstChunk = true;
-        
-        // Before starting to stream, make sure we have a valid WebSocket connection
-        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
-            console.log('WebSocket not connected, attempting to connect before streaming...');
-            connectWebSocket();
-            
-            // Wait a short time for the connection to establish
-            setTimeout(() => {
-                if (websocket && websocket.readyState === WebSocket.OPEN) {
-                    console.log('WebSocket connected, now starting audio streaming');
-                    startAudioRecording();
-                } else {
-                    console.error('Could not establish WebSocket connection for streaming');
-                }
-            }, 1000);
-        } else {
-            // WebSocket is already connected, start recording immediately
-            startAudioRecording();
-        }
-        
-        // Set up a keep-alive ping to prevent the connection from closing
-        clearInterval(websocketKeepAliveInterval);
-        websocketKeepAliveInterval = setInterval(() => {
-            if (websocket && websocket.readyState === WebSocket.OPEN && isStreamingAudio) {
-                try {
-                    // Send a simple ping message
-                    const pingMessage = JSON.stringify({ type: 'ping' });
-                    websocket.send(pingMessage);
-                    console.log('Sent keep-alive ping');
-                } catch (error) {
-                    console.error('Error sending keep-alive ping:', error);
-                }
+        // Wait a short time for the connection to establish
+        setTimeout(() => {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                console.log('WebSocket connected, now starting audio streaming');
+                startAudioRecording();
+            } else {
+                console.error('Could not establish WebSocket connection for streaming');
             }
-        }, 5000); // Send a ping every 5 seconds while streaming
+        }, 1000);
+    } else {
+        // WebSocket is already connected, start recording immediately
+        startAudioRecording();
     }
 }
 
@@ -653,43 +625,35 @@ function stopAudioStreaming() {
     isStreamingAudio = false;
     clearTimeout(streamingInterval);
     
-    // Clear the keep-alive interval to prevent unnecessary pings
-    if (typeof websocketKeepAliveInterval !== 'undefined' && websocketKeepAliveInterval !== null) {
-        clearInterval(websocketKeepAliveInterval);
-        websocketKeepAliveInterval = null;
-        console.log('Cleared WebSocket keep-alive interval');
-    }
-    
     // Disconnect and clean up audio processing nodes if they exist
     if (window.audioSource) {
         try {
             window.audioSource.disconnect();
-            console.log('Disconnected audio source');
+            window.audioSource = null;
         } catch (error) {
             console.error('Error disconnecting audio source:', error);
         }
     }
     
-    if (window.audioProcessor) {
+    // Stop the media recorder if it's recording
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
         try {
-            window.audioProcessor.disconnect();
-            console.log('Disconnected audio processor');
+            mediaRecorder.stop();
+            isRecording = false;
         } catch (error) {
-            console.error('Error disconnecting audio processor:', error);
+            console.error('Error stopping media recorder:', error);
         }
     }
     
-    // Send a proper end-of-stream message
-    if (websocket && websocket.readyState === WebSocket.OPEN) {
-        try {
-            // Send an empty buffer to signal the end of the stream
-            const emptyBuffer = new ArrayBuffer(0);
-            websocket.send(emptyBuffer);
-            console.log('Sent end-of-stream signal');
-        } catch (error) {
-            console.error('Error sending end-of-stream signal:', error);
-        }
-    }
+    // Clear any pending audio chunks
+    audioChunks = [];
+    
+    // Update UI to reflect stopped state
+    toggleMicBtn.textContent = 'Start';
+    toggleMicBtn.classList.remove('active');
+    audioEnabled = false;
+    
+    console.log('Audio streaming stopped');
 }
 
 // Send audio to the server for processing (batch mode)
