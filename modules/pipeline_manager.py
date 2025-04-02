@@ -29,6 +29,7 @@ class PipelineManager:
         
     def initialize_transport(self):
         """Initialize the WebSocket transport for real-time audio streaming"""
+        from pipecat.transports.network.websocket_server import WebsocketServerTransport, WebsocketServerParams
         from pipecat.serializers.protobuf import ProtobufFrameSerializer
         
         # Create a WebSocket transport with minimal configuration
@@ -37,20 +38,14 @@ class PipelineManager:
                 host="0.0.0.0",
                 port=int(os.getenv("WEBSOCKET_PORT", "8765")),
                 path="/ws",
-                serializer=ProtobufFrameSerializer(),
-                audio_out_enabled=True,
-                add_wav_header=False,
-                vad_enabled=False,
-                session_timeout=600,
-                audio_sample_rate=24000,  # Required by OpenAI TTS
+                serializer=ProtobufFrameSerializer(),  # Required parameter
                 debug=True,
-                raw_audio_mode=True,      # Accept raw audio data
-                audio_format="webm",      # Specify WebM format
-                accept_raw_audio=True     # Accept raw audio from browsers
+                binary_mode=True,  # Accept binary data directly
+                audio_sample_rate=24000  # Required by OpenAI TTS
             )
         )
         
-        logger.info("WebSocket transport initialized for WebM audio")
+        logger.info("WebSocket transport initialized for PCM audio")
         return self.transport
         
     def initialize_services(self):

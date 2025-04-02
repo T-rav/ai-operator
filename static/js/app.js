@@ -371,88 +371,46 @@ function setupAudioProcessing() {
     // Setup the audio visualizer
     setupAudioVisualizer(mediaStream);
     
-    // Create a media recorder optimized for real-time streaming
-    let options;
+    // Create a media stream source from the microphone stream
+    const source = audioContext.createMediaStreamSource(mediaStream);
     
-    // Pipecat explicitly requires WebM format for audio data
-    try {
-        console.log('Setting up audio recording with format compatible with Pipecat');
-        
-        // WebM with Opus is the most reliable format for Pipecat
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            options = { 
-                mimeType: 'audio/webm;codecs=opus', 
-                audioBitsPerSecond: 128000  // Higher bitrate for better quality
-            };
-            console.log('Using WebM with Opus codec for recording (optimal for Pipecat)');
-        } 
-        // Fallback to standard WebM if Opus isn't supported
-        else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            options = { 
-                mimeType: 'audio/webm', 
-                audioBitsPerSecond: 128000
-            };
-            console.log('Using standard WebM format for recording');
-        }
-        // WAV as a last resort, though Pipecat may have issues with it
-        else if (MediaRecorder.isTypeSupported('audio/wav')) {
-            options = { 
-                mimeType: 'audio/wav', 
-                audioBitsPerSecond: 128000
-            };
-            console.log('Using WAV format for recording (may have compatibility issues)');
-        } else {
-            // Last resort fallback
-            console.log('No WebM support detected - Pipecat requires WebM format');
-            options = { audioBitsPerSecond: 16000 };
-        }
-    } catch (e) {
-        console.error('Error checking audio format support:', e);
-        // Default fallback
-        options = { audioBitsPerSecond: 16000 };
-    }
+    // Create a script processor node to process audio data
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
     
-    mediaRecorder = new MediaRecorder(mediaStream, options);
-    
-    mediaRecorder.ondataavailable = event => {
-        if (event.data.size > 0) {
-            if (isStreamingAudio) {
-                // Send raw WebM audio data directly to Pipecat
-                const audioBlob = new Blob([event.data], { type: 'audio/webm;codecs=opus' });
-                websocket.send(audioBlob);
-            } else {
-                // In batch mode, collect chunks
-                audioChunks.push(event.data);
+    // Process audio data and send to server
+    processor.onaudioprocess = (e) => {
+        if (isStreamingAudio && websocket && websocket.readyState === WebSocket.OPEN) {
+            // Get raw PCM data from the audio buffer
+            const input = e.inputBuffer.getChannelData(0);
+            
+            // Convert float32 audio data to Int16 (16-bit PCM)
+            const pcm = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+                // Scale and clamp the float32 values to int16 range
+                pcm[i] = Math.max(-32768, Math.min(32767, Math.floor(input[i] * 32767)));
+            }
+            
+            // Send the PCM buffer to the server
+            websocket.send(pcm.buffer);
+            
+            // Log less frequently to reduce console spam
+            if (Math.random() < 0.01) { // Only log about 1% of chunks
+                console.log('Sent PCM audio chunk, size:', pcm.buffer.byteLength, 'bytes');
             }
         }
     };
     
-    mediaRecorder.onstop = () => {
-        if (!isStreamingAudio && audioChunks.length > 0 && aiEnabled) {
-            // In batch mode, send the complete audio blob
-            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/wav' });
-            console.log('Sending audio blob to server, size:', audioBlob.size);
-            sendAudioToServer(audioBlob);
-            audioChunks = [];
-        } else if (isStreamingAudio && websocket && websocket.readyState === WebSocket.OPEN) {
-            // In streaming mode, signal the end of the stream by sending an empty chunk
-            const emptyChunk = new Blob([], { type: 'audio/webm' });
-            websocket.send(emptyChunk);
-        }
-        
-        // Restart recording if AI is still enabled
-        if (aiEnabled && !isRecording && audioEnabled) {
-            if (isStreamingAudio) {
-                startAudioStreaming();
-            } else {
-                startRecording();
-            }
-        }
-    };
+    // Connect the nodes
+    source.connect(processor);
+    processor.connect(audioContext.destination);
     
-    // Start streaming audio to server in real-time
-    startAudioStreaming();
-    console.log('Started real-time audio streaming with Pipecat');
+    // Store the processor and source for later cleanup
+    window.audioProcessor = processor;
+    window.audioSource = source;
+    
+    // Start streaming audio to server
+    isStreamingAudio = true;
+    console.log('Started real-time audio streaming with PCM format');
 }
 
 // Setup audio visualizer
@@ -720,25 +678,34 @@ function stopAudioStreaming() {
         console.log('Cleared WebSocket keep-alive interval');
     }
     
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-        isRecording = false;
-        console.log('Stopped media recorder');
+    // Disconnect and clean up audio processing nodes if they exist
+    if (window.audioSource) {
+        try {
+            window.audioSource.disconnect();
+            console.log('Disconnected audio source');
+        } catch (error) {
+            console.error('Error disconnecting audio source:', error);
+        }
+    }
+    
+    if (window.audioProcessor) {
+        try {
+            window.audioProcessor.disconnect();
+            console.log('Disconnected audio processor');
+        } catch (error) {
+            console.error('Error disconnecting audio processor:', error);
+        }
     }
     
     // Send a proper end-of-stream message
     if (websocket && websocket.readyState === WebSocket.OPEN) {
         try {
-            // Send a JSON message to signal end of streaming
-            const endMessage = JSON.stringify({ type: 'end_stream' });
-            websocket.send(endMessage);
-            console.log('Sent end-of-stream message');
-            
-            // Also send an empty audio chunk as a fallback
-            const emptyChunk = new Blob([], { type: 'audio/webm' });
-            websocket.send(emptyChunk);
+            // Send an empty buffer to signal the end of the stream
+            const emptyBuffer = new ArrayBuffer(0);
+            websocket.send(emptyBuffer);
+            console.log('Sent end-of-stream signal');
         } catch (error) {
-            console.error('Error sending end-of-stream message:', error);
+            console.error('Error sending end-of-stream signal:', error);
         }
     }
 }
@@ -809,6 +776,7 @@ function sendAudioChunkToServer(audioChunk) {
                     }
                     
                     // Send raw WebM audio data directly to Pipecat
+                    // Pipecat expects raw binary data, not wrapped in a Blob
                     websocket.send(dataToSend);
                     
                     // Log less frequently to reduce console spam
