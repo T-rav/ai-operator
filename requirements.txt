@@ -1,15 +1,24 @@
+# Web server
 flask==2.3.3
+
+# Environment and configuration
 python-dotenv==1.0.0
+
+# OpenAI services
 openai==1.7.0
+
+# HTTP requests
 requests==2.31.0
-websockets==11.0.3
+aiohttp==3.8.5
+
+# Audio processing
 pyaudio==0.2.13
 numpy==1.24.3
-aiohttp==3.8.5
-python-socketio==5.8.0
-eventlet==0.33.3
-pyjwt==2.8.0
-pydub==0.25.1
-pipecat>=0.3.0
+
+# Pipecat framework for audio pipeline
+pipecat==0.0.62.dev125  # Specific version used in development
+
+# Utilities
 loguru>=0.7.2
 protobuf>=4.25.1
+
