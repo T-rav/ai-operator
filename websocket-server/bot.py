@@ -95,9 +95,12 @@ async def main():
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
 
+    # todo : this might be better suited for a different service? OpenAI? Not that this is bad? But is it the best?
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
+        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121" 
+        # "71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
+        #"694f9389-aac1-45b6-b726-9d9369183238" # Sarah USA 
     )
 
     messages = [
