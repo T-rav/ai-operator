@@ -1,27 +1,2 @@
-# Web server
-fastapi~=0.115.6  # Required by pipecat-ai[websocket]
-uvicorn==0.27.1
-jinja2==3.1.2  # For templating
-python-multipart==0.0.9  # For form data processing
-websockets~=13.1  # Required for WebSocket support
-
-# Environment and configuration
-python-dotenv==1.0.0
-
-# OpenAI services
-openai~=1.67.0  # Required by pipecat-ai
-
-# HTTP requests
-requests==2.31.0
-aiohttp~=3.11.12  # Required by pipecat-ai
-
-# Audio processing
-numpy~=1.26.4  # Required by pipecat-ai
-
-# Pipecat framework for audio pipeline
-pipecat-ai[websocket]==0.0.62  # Latest available version with WebSocket support
-
-# Utilities
-loguru>=0.7.2
-protobuf>=4.25.1
-
+python-dotenv
+pipecat-ai[cartesia,openai,silero,websocket,deepgram]
