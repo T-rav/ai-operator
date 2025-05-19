@@ -21,6 +21,7 @@ from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.transports.network.websocket_server import (
     WebsocketServerParams,
     WebsocketServerTransport,
@@ -91,6 +92,8 @@ async def main():
         )
     )
 
+    transcript = TranscriptProcessor()
+
     llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
@@ -117,10 +120,12 @@ async def main():
         [
             transport.input(),  # Websocket input from client
             stt,  # Speech-To-Text
+            transcript.user(),  # Captures user transcripts
             context_aggregator.user(),
             llm,  # LLM
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
+            transcript.assistant(),  # Captures assistant transcripts
             context_aggregator.assistant(),
         ]
     )
