@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcript Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+        }
+        .user {
+            background-color: #e6f7ff;
+        }
+        .ai {
+            background-color: #f0f0f0;
+        }
+        .avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #007bff;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 10px;
+        }
+        .content {
+            flex: 1;
+        }
+        button {
+            padding: 10px 20px;
+            margin-right: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f0f0f0;
+        }
+        #transcriptContainer {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Transcript Test</h1>
+    <p>This page tests the transcript functionality by connecting to the test WebSocket server.</p>
+    <button id="startBtn">Start Test</button>
+    <button id="stopBtn" disabled>Stop Test</button>
+    <div id="status">Status: Disconnected</div>
+    <h3>Conversation Transcript</h3>
+    <div id="transcriptContainer"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.2.4/dist/protobuf.min.js"></script>
+    <script>
+        // Constants
+        const WEBSOCKET_URL = 'ws://localhost:8765';
+        
+        // DOM elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusDiv = document.getElementById('status');
+        const transcriptContainer = document.getElementById('transcriptContainer');
+        
+        // State
+        let ws = null;
+        let Frame = null;
+        let isSpeaking = false;
+        let isAIResponding = false;
+        let latestUserMessage = null;
+        let latestAIMessage = null;
+        
+        // Initialize protobuf
+        protobuf.load('frames.proto', (err, root) => {
+            if (err) {
+                console.error('Failed to load protobuf:', err);
+                statusDiv.textContent = 'Status: Failed to load protobuf';
+                return;
+            }
+            
+            Frame = root.lookupType('pipecat.Frame');
+            statusDiv.textContent = 'Status: Ready to start test';
+            startBtn.disabled = false;
+        });
+        
+        function initWebSocket() {
+            ws = new WebSocket(WEBSOCKET_URL);
+            ws.binaryType = 'arraybuffer';
+            
+            ws.addEventListener('open', () => {
+                console.log('WebSocket connection established');
+                statusDiv.textContent = 'Status: Connected';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            });
+            
+            ws.addEventListener('message', (event) => {
+                const arrayBuffer = event.data;
+                try {
+                    const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
+                    console.log('Received frame:', parsedFrame);
+                    
+                    // Handle transcription messages
+                    if (parsedFrame?.transcription) {
+                        console.log('Transcription:', parsedFrame.transcription.text);
+                        addMessageToTranscript(parsedFrame.transcription.text, 'user');
+                    }
+                    
+                    // Handle text messages (AI responses)
+                    if (parsedFrame?.text) {
+                        console.log('AI Text:', parsedFrame.text.text);
+                        addMessageToTranscript(parsedFrame.text.text, 'ai');
+                    }
+                } catch (error) {
+                    console.error('Error decoding frame:', error);
+                }
+            });
+            
+            ws.addEventListener('close', (event) => {
+                console.log('WebSocket connection closed', event);
+                statusDiv.textContent = 'Status: Disconnected';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                resetState();
+            });
+            
+            ws.addEventListener('error', (event) => {
+                console.error('WebSocket error:', event);
+                statusDiv.textContent = 'Status: Error';
+            });
+        }
+        
+        function resetState() {
+            isSpeaking = false;
+            isAIResponding = false;
+            latestUserMessage = null;
+            latestAIMessage = null;
+        }
+        
+        function addMessageToTranscript(text, type = 'user', isPlaceholder = false) {
+            // Check if this is a placeholder or matches one of our special placeholder texts
+            if (text === 'User speaking...' || text === 'AI response...') {
+                isPlaceholder = true;
+            }
+            
+            // If this is a transcription and we have a placeholder, update it instead of creating a new message
+            if (!isPlaceholder) {
+                if (type === 'user' && latestUserMessage) {
+                    // Update existing user placeholder with actual transcript
+                    const content = latestUserMessage.querySelector('.content');
+                    if (content) {
+                        content.textContent = text;
+                        return; // Exit early, no need to create a new message
+                    }
+                } else if (type === 'ai' && latestAIMessage) {
+                    // Update existing AI placeholder with actual response
+                    const content = latestAIMessage.querySelector('.content');
+                    if (content) {
+                        content.textContent = text;
+                        return; // Exit early, no need to create a new message
+                    }
+                }
+            }
+            
+            // Create a new message element
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar';
+            avatar.textContent = type === 'user' ? 'U' : 'AI';
+            
+            const content = document.createElement('div');
+            content.className = 'content';
+            content.textContent = text;
+            
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(content);
+            transcriptContainer.appendChild(messageDiv);
+            
+            // Store reference to the latest message if it's a placeholder
+            if (isPlaceholder) {
+                if (type === 'user') {
+                    latestUserMessage = messageDiv;
+                } else if (type === 'ai') {
+                    latestAIMessage = messageDiv;
+                }
+            }
+            
+            // Scroll to bottom
+            transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+        }
+        
+        startBtn.addEventListener('click', () => {
+            initWebSocket();
+        });
+        
+        stopBtn.addEventListener('click', () => {
+            if (ws) {
+                ws.close();
+            }
+        });
+    </script>
+</body>
+</html>
