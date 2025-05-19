@@ -1,0 +1,13 @@
+{
+  "name": "ai-operator",
+  "version": "1.0.0",
+  "description": "AI Operator application",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

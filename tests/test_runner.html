@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcript Functionality Tests</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+        .test-results {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .pass {
+            color: green;
+        }
+        .fail {
+            color: red;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .test-summary {
+            font-weight: bold;
+            margin-top: 15px;
+            font-size: 1.2em;
+        }
+    </style>
+</head>
+<body>
+    <h1>Transcript Functionality Tests</h1>
+    <p>This page runs unit tests for the transcript functionality in the AI Operator application.</p>
+    <p>These tests verify that placeholder messages are correctly replaced with actual transcripts.</p>
+    
+    <button id="runTestsBtn">Run Tests</button>
+    
+    <div id="testResults" class="test-results">
+        <p>Click "Run Tests" to start testing...</p>
+    </div>
+    
+    <!-- Import the test script -->
+    <script src="test_transcript.js"></script>
+    
+    <script>
+        document.getElementById('runTestsBtn').addEventListener('click', function() {
+            const testResults = document.getElementById('testResults');
+            testResults.innerHTML = '<p>Running tests...</p>';
+            
+            // Create a console.log wrapper to capture output
+            const originalLog = console.log;
+            const originalError = console.error;
+            const originalAssert = console.assert;
+            
+            let testOutput = '';
+            
+            console.log = function(message) {
+                testOutput += message + '<br>';
+                originalLog.apply(console, arguments);
+            };
+            
+            console.error = function(message) {
+                testOutput += '<span class="fail">' + message + '</span><br>';
+                originalError.apply(console, arguments);
+            };
+            
+            console.assert = function(condition, message) {
+                if (!condition) {
+                    testOutput += '<span class="fail">ASSERTION FAILED: ' + message + '</span><br>';
+                }
+                originalAssert.apply(console, arguments);
+            };
+            
+            try {
+                // Run the tests
+                const success = runTests();
+                
+                // Display the results
+                testResults.innerHTML = '<pre>' + testOutput + '</pre>';
+                testResults.innerHTML += '<div class="test-summary">Tests ' + 
+                    (success ? '<span class="pass">PASSED</span>' : '<span class="fail">FAILED</span>') + '</div>';
+            } catch (error) {
+                testResults.innerHTML = '<pre>' + testOutput + '</pre>';
+                testResults.innerHTML += '<div class="fail">Error running tests: ' + error.message + '</div>';
+            } finally {
+                // Restore original console functions
+                console.log = originalLog;
+                console.error = originalError;
+                console.assert = originalAssert;
+            }
+        });
+    </script>
+</body>
+</html>
