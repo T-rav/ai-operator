@@ -299,6 +299,10 @@
 
       // AI response tracking
       let isAIResponding = false;
+      
+      // Variables to track the latest message elements
+      let latestUserMessage = null;
+      let latestAIMessage = null;
 
       let startBtn = document.getElementById('startAudioBtn');
       let stopBtn = document.getElementById('stopAudioBtn');
@@ -427,7 +431,7 @@
               // Add AI message only when we first start receiving audio
               if (!isAIResponding) {
                   isAIResponding = true;
-                  addMessageToTranscript('AI response...', 'ai');
+                  addMessageToTranscript('AI response...', 'ai', true);
               }
           });
       }
@@ -483,7 +487,7 @@
                   if (rms > 0.01) { // Adjust threshold as needed
                     if (!isSpeaking) {
                       isSpeaking = true;
-                      addMessageToTranscript('User speaking...', 'user');
+                      addMessageToTranscript('User speaking...', 'user', true);
                     }
                     if (silenceTimeout) {
                       clearTimeout(silenceTimeout);
@@ -562,6 +566,10 @@
           
           // Reset AI response tracking
           isAIResponding = false;
+          
+          // Reset latest message references
+          latestUserMessage = null;
+          latestAIMessage = null;
       }
 
       function stopAudioBtnHandler() {
@@ -569,7 +577,27 @@
       }
 
       // Function to add a message to the transcript
-      function addMessageToTranscript(text, type = 'user') {
+      function addMessageToTranscript(text, type = 'user', isPlaceholder = false) {
+        // If this is a transcription and we have a placeholder, update it instead of creating a new message
+        if (!isPlaceholder) {
+          if (type === 'user' && latestUserMessage && isSpeaking) {
+            // Update existing user placeholder with actual transcript
+            const content = latestUserMessage.querySelector('.content');
+            if (content) {
+              content.textContent = text;
+              return; // Exit early, no need to create a new message
+            }
+          } else if (type === 'ai' && latestAIMessage && isAIResponding) {
+            // Update existing AI placeholder with actual response
+            const content = latestAIMessage.querySelector('.content');
+            if (content) {
+              content.textContent = text;
+              return; // Exit early, no need to create a new message
+            }
+          }
+        }
+        
+        // Create a new message element
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
         
@@ -584,6 +612,15 @@
         messageDiv.appendChild(avatar);
         messageDiv.appendChild(content);
         transcriptContainer.appendChild(messageDiv);
+        
+        // Store reference to the latest message if it's a placeholder
+        if (isPlaceholder) {
+          if (type === 'user') {
+            latestUserMessage = messageDiv;
+          } else if (type === 'ai') {
+            latestAIMessage = messageDiv;
+          }
+        }
         
         // Scroll to bottom
         transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
