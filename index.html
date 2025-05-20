@@ -385,13 +385,43 @@
               // Handle transcription messages
               if (parsedFrame?.transcription) {
                   console.log('Transcription:', parsedFrame.transcription.text); // Debug log
-                  addMessageToTranscript(parsedFrame.transcription.text, 'user');
+                  
+                  // Determine if this is a user or AI transcription
+                  const speaker = parsedFrame.transcription.speaker || 'user';
+                  addMessageToTranscript(parsedFrame.transcription.text, speaker);
+              }
+              
+              // Handle AI speech transcription if it exists
+              if (parsedFrame?.aiSpeech && parsedFrame.aiSpeech.text) {
+                  console.log('AI Speech:', parsedFrame.aiSpeech.text);
+                  
+                  // If this is our first AI response in this exchange, create a new message
+                  if (!isAIResponding) {
+                      isAIResponding = true;
+                      addMessageToTranscript(parsedFrame.aiSpeech.text, 'ai');
+                  } else {
+                      // Update the last AI message in the transcript
+                      updateLastAIMessage(parsedFrame.aiSpeech.text);
+                  }
               }
               
               // Handle audio messages
               if (parsedFrame?.audio) {
                   enqueueAudioFromProto(arrayBuffer);
               }
+          }
+      }
+
+      // Function to update the last AI message in the transcript
+      function updateLastAIMessage(text) {
+          const aiMessages = transcriptContainer.querySelectorAll('.message.ai');
+          if (aiMessages.length > 0) {
+              const lastAIMessage = aiMessages[aiMessages.length - 1];
+              const content = lastAIMessage.querySelector('.content');
+              content.textContent = text;
+          } else {
+              // If no AI message exists yet, create one
+              addMessageToTranscript(text, 'ai');
           }
       }
 
@@ -425,7 +455,8 @@
               playTime = playTime + buffer.duration;
 
               // Add AI message only when we first start receiving audio
-              if (!isAIResponding) {
+              // and if we don't already have an AI speech transcription
+              if (!isAIResponding && !parsedFrame.aiSpeech) {
                   isAIResponding = true;
                   addMessageToTranscript('AI response...', 'ai');
               }

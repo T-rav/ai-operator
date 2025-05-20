@@ -36,9 +36,26 @@ message TranscriptionFrame {
 }
 
 message Frame {
-  oneof frame {
-    TextFrame text = 1;
-    AudioRawFrame audio = 2;
-    TranscriptionFrame transcription = 3;
+  oneof payload {
+    Audio audio = 1;
+    Transcription transcription = 2;
+    AISpeech aiSpeech = 3;
   }
+}
+
+message Audio {
+  repeated uint32 audio = 1;
+  uint32 sample_rate = 2;
+  uint32 num_channels = 3;
+}
+
+message Transcription {
+  string text = 1;
+  string speaker = 2;  // "user" or "ai"
+  bool is_final = 3;
+}
+
+message AISpeech {
+  string text = 1;
+  bool is_final = 2;
 }

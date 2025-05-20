@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import BotInterruptionFrame, EndFrame
+from pipecat.frames.frames import BotInterruptionFrame, EndFrame, TextFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -25,6 +25,28 @@ from pipecat.transports.network.websocket_server import (
     WebsocketServerParams,
     WebsocketServerTransport,
 )
+
+# Custom serializer that intercepts TextFrames and adds AI speech data
+class CustomProtobufSerializer(ProtobufFrameSerializer):
+    def serialize(self, frame):
+        # Intercept TextFrames from assistant to add AI speech
+        if isinstance(frame, TextFrame) and frame.role == 'assistant':
+            # Create the normal serialized data
+            serialized = super().serialize(frame)
+            
+            # Also create an "AI speech" message with the same text
+            ai_speech_data = {
+                "aiSpeech": {
+                    "text": frame.text,
+                    "is_final": frame.is_final if hasattr(frame, 'is_final') else False
+                }
+            }
+            
+            # Return both the normal message and our custom AI speech message
+            return [serialized, ai_speech_data]
+        
+        # For all other frames, just use the normal serialization
+        return super().serialize(frame)
 
 load_dotenv(override=True)
 
@@ -79,9 +101,12 @@ class SessionTimeoutHandler:
 
 
 async def main():
+    # Create our custom serializer
+    serializer = CustomProtobufSerializer()
+    
     transport = WebsocketServerTransport(
         params=WebsocketServerParams(
-            serializer=ProtobufFrameSerializer(),
+            serializer=serializer,  # Use our custom serializer
             audio_out_enabled=True,
             add_wav_header=True,
             vad_enabled=True,
@@ -95,12 +120,9 @@ async def main():
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
 
-    # todo : this might be better suited for a different service? OpenAI? Not that this is bad? But is it the best?
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121" 
-        # "71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
-        #"694f9389-aac1-45b6-b726-9d9369183238" # Sarah USA 
+        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121"
     )
 
     messages = [
