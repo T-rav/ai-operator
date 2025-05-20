@@ -150,6 +150,11 @@ function handleWebSocketOpen(event) {
           isSpeaking = true;
           addMessageToTranscript('User speaking...', 'user');
           console.log('Speech detected, RMS:', rms);
+          
+          // Check if AI is currently responding and send interruption if so
+          if (isAIResponding) {
+            sendInterruptionSignal();
+          }
         }
         
         if (silenceTimeout) {
@@ -166,4 +171,49 @@ function handleWebSocketOpen(event) {
       }
     };
   }).catch((error) => console.error('Error accessing microphone:', error));
+}
+
+// Send interruption signal to the server to stop AI response
+function sendInterruptionSignal() {
+  if (!ws || !isAIResponding) return;
+  
+  console.log('Sending interruption signal to stop AI response');
+  
+  try {
+    // Create interruption frame
+    const interruptFrame = Frame.create({
+      start_interruption: {
+        user_id: 'user',
+        timestamp: Date.now().toString()
+      }
+    });
+    
+    // Encode and send the interruption signal
+    const encodedInterrupt = new Uint8Array(Frame.encode(interruptFrame).finish());
+    ws.send(encodedInterrupt);
+    
+    // Stop any current audio playback
+    stopAllAIAudio();
+    
+    // Stop the transcription from continuing
+    stopAITranscription();
+    
+    // Reset AI response state
+    isAIResponding = false;
+    
+    // Add system message indicating interruption
+    addMessageToTranscript('User interrupted', 'system');
+  } catch (error) {
+    console.error('Error sending interruption signal:', error);
+  }
+}
+
+// Stop any currently playing AI audio
+function stopAIAudio() {
+  // Reset play time to stop scheduling new audio
+  playTime = audioContext.currentTime;
+  
+  // Any additional audio stopping logic can be added here
+  
+  console.log('AI audio playback interrupted');
 } 

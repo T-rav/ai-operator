@@ -16,6 +16,12 @@ function resetAIMessageTracking() {
 
 // Queue AI messages for progressive display
 function queueAIMessage(text, timestamp) {
+  // If AI has been interrupted, don't queue new messages
+  if (!isAIResponding) {
+    console.log('Ignoring new AI message due to interruption');
+    return;
+  }
+  
   // Determine if this is a new speech response
   const isFirstMessage = !currentSpeechId;
   
@@ -82,6 +88,22 @@ function completeCurrentAIMessage() {
   }
 }
 
+// Immediately end all AI message processing due to interruption
+function stopAITranscription() {
+  // Complete current message to show what was said so far
+  if (isDisplayingMessage) {
+    completeCurrentAIMessage();
+  }
+  
+  // Clear any queued messages
+  aiMessageQueue = [];
+  
+  // Prevent new messages from being processed
+  isAIResponding = false;
+  
+  console.log('AI transcription stopped due to interruption');
+}
+
 // Find the current AI message
 function findCurrentAIMessage() {
   if (!transcriptContainer) return null;
@@ -95,6 +117,9 @@ function findCurrentAIMessage() {
 
 // Process the AI message queue progressively
 function processAIMessageQueue() {
+  // Don't process if AI has been interrupted
+  if (!isAIResponding) return;
+  
   // Just trigger the progressive display if not already running
   if (!isDisplayingMessage) {
     startProgressiveDisplay();
@@ -113,6 +138,12 @@ function startProgressiveDisplay() {
 
 // Display the next character in the transcript
 function displayNextCharacter() {
+  // Stop if AI has been interrupted
+  if (!isAIResponding) {
+    isDisplayingMessage = false;
+    return;
+  }
+  
   if (aiCurrentIndex >= aiFullTranscript.length) {
     isDisplayingMessage = false;
     return;

@@ -1,5 +1,8 @@
 // Audio processing functions
 
+// Track active audio sources to be able to stop them
+let activeAudioSources = [];
+
 function calculateRMS(audioData) {
   let sum = 0;
   for (let i = 0; i < audioData.length; i++) {
@@ -38,6 +41,12 @@ function enqueueAudioFromProto(arrayBuffer) {
   const audioArray = new Uint8Array(audioData);
 
   audioContext.decodeAudioData(audioArray.buffer, function(buffer) {
+      // Skip playing if we've been interrupted
+      if (!isAIResponding) {
+          console.log('Skipping audio playback due to interruption');
+          return;
+      }
+      
       const audioSource = new AudioBufferSourceNode(audioContext);
       audioSource.buffer = buffer;
       
@@ -48,9 +57,39 @@ function enqueueAudioFromProto(arrayBuffer) {
       // Start displaying AI transcriptions as audio plays
       processAIMessageQueue();
       
+      // Add to active sources for potential stopping
+      activeAudioSources.push(audioSource);
+      
+      // Clean up when finished
+      audioSource.onended = function() {
+          // Remove from active sources array
+          const index = activeAudioSources.indexOf(audioSource);
+          if (index > -1) {
+              activeAudioSources.splice(index, 1);
+          }
+      };
+      
       audioSource.start(playTime);
       playTime = playTime + buffer.duration;
   });
+}
+
+// Stop all actively playing AI audio sources
+function stopAllAIAudio() {
+  // Stop all currently playing audio sources
+  for (let source of activeAudioSources) {
+      try {
+          source.stop();
+      } catch (e) {
+          // Ignore errors from sources that might have already stopped
+      }
+  }
+  
+  // Clear the array
+  activeAudioSources = [];
+  
+  // Reset play time to prevent scheduled audio from playing
+  playTime = audioContext.currentTime;
 }
 
 function startAudioBtnHandler() {
@@ -101,6 +140,9 @@ function stopAudio(closeWebsocket) {
   if (aiDisplayTimer) {
       clearTimeout(aiDisplayTimer);
   }
+  
+  // Stop any playing audio
+  stopAllAIAudio();
   
   // Reset AI response tracking
   resetAIMessageTracking();
