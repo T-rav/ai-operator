@@ -177,6 +177,13 @@ function handleWebSocketOpen(event) {
 function sendInterruptionSignal() {
   if (!ws || !isAIResponding) return;
   
+  // Check if AI has already finished speaking
+  if (activeAudioSources.length === 0 && !isDisplayingMessage) {
+    // AI has finished speaking, just mark as not responding without showing interruption
+    isAIResponding = false;
+    return;
+  }
+  
   console.log('Sending interruption signal to stop AI response');
   
   try {

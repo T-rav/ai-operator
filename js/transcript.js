@@ -189,7 +189,13 @@ function addMessageToTranscript(text, type = 'user', placeholder = false) {
   
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
-  avatar.textContent = type === 'user' ? 'U' : 'AI';
+  
+  // Set appropriate avatar text based on message type
+  if (type === 'system') {
+    avatar.textContent = 'S';
+  } else {
+    avatar.textContent = type === 'user' ? 'U' : 'AI';
+  }
   
   const content = document.createElement('div');
   content.className = 'content';
