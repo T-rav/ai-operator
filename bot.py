@@ -37,7 +37,16 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
     async def serialize(self, frame):
         # Only log TextFrames, not audio frames
         if not (hasattr(frame, '__class__') and frame.__class__.__name__ == 'OutputAudioRawFrame'):
-            logger.info(f"Serializing frame type: {type(frame).__name__}")
+            logger.debug(f"Serializing frame type: {type(frame).__name__}")
+        
+        # Special handling for TranscriptionFrame 
+        if isinstance(frame, TranscriptionFrame):
+            try:
+                # Create a field with both formats to ensure client can read it
+                frame.user_id = 'ai'  # Standard snake_case format
+                logger.debug(f"Set TranscriptionFrame user_id to 'ai'")
+            except Exception as e:
+                logger.error(f"Error processing TranscriptionFrame: {e}")
             
         # Use the normal serialization for all frames
         return await super().serialize(frame)
@@ -49,6 +58,10 @@ class TextTranscriptionProcessor(FrameProcessor):
         self.transport = transport
         self.serializer = serializer
         self.client = None  # Add a client attribute to store the connection
+        self.accumulated_text = ""  # Store accumulated text
+        self.last_send_time = datetime.datetime.now()
+        self.send_interval = 0.8  # Increased time between sends to batch more words
+        self.min_batch_size = 15  # Minimum number of characters before sending
         logger.info("TextTranscriptionProcessor initialized")
     
     async def process_frame(self, frame, direction=None):
@@ -58,49 +71,69 @@ class TextTranscriptionProcessor(FrameProcessor):
         # If this is an LLMTextFrame, create a transcription frame
         if isinstance(frame, LLMTextFrame):
             text = frame.text if hasattr(frame, 'text') else str(frame)
-            logger.info(f"TextTranscriptionProcessor: Processing LLMTextFrame: {text}")
-            
-            # Create a proper TranscriptionFrame object instead of a dictionary
-            transcription_frame = TranscriptionFrame(
-                text=text,
-                user_id="ai",  # Use user_id instead of speaker
-                timestamp=datetime.datetime.now().isoformat()
-            )
+            logger.debug(f"TextTranscriptionProcessor: Processing LLMTextFrame: {text}")
             
             # First pass through the original frame for TTS conversion
             await self.push_frame(frame, direction)
             
-            # Then directly send the transcription frame to the transport's output
-            # This bypasses the normal pipeline flow to ensure it reaches the client
-            try:
-                # Serialize the transcription frame
-                serialized_frame = await self.serializer.serialize(transcription_frame)
+            # Accumulate text
+            self.accumulated_text += text
+            
+            # Check if we should send the accumulated text
+            # We want to send complete sentences or phrases whenever possible
+            now = datetime.datetime.now()
+            time_since_last_send = (now - self.last_send_time).total_seconds()
+            
+            # Send if: 
+            # 1. It's been at least send_interval seconds since the last send
+            # 2. We have accumulated text that ends with sentence-ending punctuation
+            # 3. We have a minimum amount of text accumulated
+            should_send = (
+                (time_since_last_send >= self.send_interval and len(self.accumulated_text.strip()) >= self.min_batch_size) or
+                any(self.accumulated_text.endswith(p) for p in ['.', '!', '?']) or
+                len(self.accumulated_text) > 100  # Some reasonable max length
+            )
+            
+            if should_send and self.accumulated_text.strip():
+                # Create a TranscriptionFrame with the accumulated text
+                transcription_frame = TranscriptionFrame(
+                    text=self.accumulated_text,
+                    user_id="ai",  # This must be explicitly set to 'ai'
+                    timestamp=now.isoformat()
+                )
                 
-                # Try using our stored client reference first
-                if self.client is not None:
-                    logger.info(f"Sending transcription frame directly to client: {text}")
-                    await self.client.send(serialized_frame)
-                # Otherwise try transport methods
-                elif hasattr(self.transport, 'broadcast'):
-                    logger.info(f"Broadcasting transcription frame to all clients: {text}")
-                    await self.transport.broadcast(serialized_frame)
-                elif hasattr(self.transport, '_client') and self.transport._client:
-                    logger.info(f"Sending transcription frame using transport._client: {text}")
-                    await self.transport._client.send(serialized_frame)
-                else:
-                    logger.warning(f"No method to send transcription frame to client, pushing to pipeline instead: {text}")
-                    # Use WebsocketServerOutputTransport for output
-                    if hasattr(self.transport, 'output'):
-                        await self.transport.output().push_frame(transcription_frame, FrameDirection.DOWNSTREAM)
+                # Send the transcription frame
+                try:
+                    # Serialize the transcription frame
+                    serialized_frame = await self.serializer.serialize(transcription_frame)
+                    
+                    # Try using our stored client reference first
+                    if self.client is not None:
+                        logger.debug(f"Sending batched transcription: {self.accumulated_text}")
+                        await self.client.send(serialized_frame)
+                    # Otherwise try transport methods
+                    elif hasattr(self.transport, 'broadcast'):
+                        logger.debug(f"Broadcasting transcription: {self.accumulated_text}")
+                        await self.transport.broadcast(serialized_frame)
+                    elif hasattr(self.transport, '_client') and self.transport._client:
+                        logger.debug(f"Sending via transport._client: {self.accumulated_text}")
+                        await self.transport._client.send(serialized_frame)
                     else:
-                        # Last resort: push to normal pipeline
-                        await self.push_frame(transcription_frame, direction)
-            except Exception as e:
-                logger.error(f"Error sending transcription frame: {e}")
-                # Try the pipeline as fallback
-                await self.push_frame(transcription_frame, direction)
-                
-            logger.info(f"TextTranscriptionProcessor: Processed AI speech: {text}")
+                        logger.warning(f"No method to send transcription frame, using pipeline: {self.accumulated_text}")
+                        # Use WebsocketServerOutputTransport for output
+                        if hasattr(self.transport, 'output'):
+                            await self.transport.output().push_frame(transcription_frame, FrameDirection.DOWNSTREAM)
+                        else:
+                            # Last resort: push to normal pipeline
+                            await self.push_frame(transcription_frame, direction)
+                    
+                    # Reset accumulated text and update last send time
+                    self.accumulated_text = ""
+                    self.last_send_time = now
+                except Exception as e:
+                    logger.error(f"Error sending transcription frame: {e}")
+                    # Try the pipeline as fallback
+                    await self.push_frame(transcription_frame, direction)
         else:
             # For any non-LLMTextFrame, just pass it through
             await self.push_frame(frame, direction)
@@ -108,7 +141,7 @@ class TextTranscriptionProcessor(FrameProcessor):
 load_dotenv(override=True)
 
 logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
+logger.add(sys.stderr, level="INFO")
 
 
 class SessionTimeoutHandler:
