@@ -299,6 +299,14 @@
 
       // AI response tracking
       let isAIResponding = false;
+      
+      // Progressive text display
+      let aiMessageQueue = [];
+      let aiFullTranscript = "";
+      let aiCurrentIndex = 0;
+      let aiDisplayTimer = null;
+      let aiDisplaySpeed = 50; // ms per character (slower = more natural)
+      let isDisplayingMessage = false;
 
       let startBtn = document.getElementById('startAudioBtn');
       let stopBtn = document.getElementById('stopAudioBtn');
@@ -414,11 +422,13 @@
                       
                       // Only add to transcript if there's actual text
                       if (transcriptionFrame.text && transcriptionFrame.text.trim()) {
-                          addMessageToTranscript(transcriptionFrame.text, speaker);
-                      
-                          // If this is an AI transcription, set the responding flag
                           if (speaker === 'ai') {
+                              // Queue AI messages for progressive display
+                              queueAIMessage(transcriptionFrame.text);
                               isAIResponding = true;
+                          } else {
+                              // User messages displayed immediately
+                              addMessageToTranscript(transcriptionFrame.text, speaker);
                           }
                       }
                   }
@@ -466,6 +476,9 @@
               // Connect output to analyzer and destination
               source.connect(analyser);
               source.connect(audioContext.destination);
+              
+              // Start displaying AI transcriptions as audio plays
+              processAIMessageQueue();
               
               source.start(playTime);
               playTime = playTime + buffer.duration;
@@ -601,17 +614,106 @@
           if (silenceTimeout) {
               clearTimeout(silenceTimeout);
           }
+          if (aiDisplayTimer) {
+              clearTimeout(aiDisplayTimer);
+          }
           
           // Reset AI response tracking
           isAIResponding = false;
+          aiMessageQueue = [];
+          aiFullTranscript = "";
+          aiCurrentIndex = 0;
+          isDisplayingMessage = false;
       }
 
       function stopAudioBtnHandler() {
           stopAudio(true);
       }
 
+      // Queue AI messages for progressive display
+      function queueAIMessage(text) {
+          // If this is the first AI message, create a placeholder in the transcript
+          if (aiMessageQueue.length === 0 && !isDisplayingMessage) {
+              // Store the full text to display slowly
+              aiFullTranscript = text;
+              aiCurrentIndex = 0;
+              
+              // Create or update the AI message placeholder
+              const existingAiMessage = findAIMessage();
+              if (!existingAiMessage) {
+                  addMessageToTranscript('', 'ai', true);
+              }
+              
+              // Start the character-by-character display
+              startProgressiveDisplay();
+          } else {
+              // For subsequent messages, append to the full transcript
+              aiFullTranscript += " " + text;
+          }
+      }
+      
+      // Find existing AI message if one exists
+      function findAIMessage() {
+          const messages = transcriptContainer.querySelectorAll('.message.ai');
+          return messages.length > 0 ? messages[messages.length - 1] : null;
+      }
+      
+      // Process the AI message queue progressively
+      function processAIMessageQueue() {
+          // Just trigger the progressive display if not already running
+          if (!isDisplayingMessage) {
+              startProgressiveDisplay();
+          }
+      }
+      
+      // Start displaying text character by character
+      function startProgressiveDisplay() {
+          if (isDisplayingMessage || aiCurrentIndex >= aiFullTranscript.length) {
+              return;
+          }
+          
+          isDisplayingMessage = true;
+          displayNextCharacter();
+      }
+      
+      // Display the next character in the transcript
+      function displayNextCharacter() {
+          if (aiCurrentIndex >= aiFullTranscript.length) {
+              isDisplayingMessage = false;
+              return;
+          }
+          
+          // Get the next character
+          const nextChar = aiFullTranscript.charAt(aiCurrentIndex);
+          aiCurrentIndex++;
+          
+          // Update the display
+          updateAITranscript(aiFullTranscript.substring(0, aiCurrentIndex));
+          
+          // Schedule the next character
+          aiDisplayTimer = setTimeout(displayNextCharacter, aiDisplaySpeed);
+      }
+      
+      // Update the AI transcript with new text
+      function updateAITranscript(text) {
+          // Get the last message if it's from AI
+          const aiMessage = findAIMessage();
+          
+          if (aiMessage) {
+              // Update existing AI message
+              const content = aiMessage.querySelector('.content');
+              content.textContent = text;
+          } else {
+              // Create a new AI message
+              addMessageToTranscript(text, 'ai');
+          }
+          
+          // Scroll to bottom
+          transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+      }
+
       // Function to add a message to the transcript
-      function addMessageToTranscript(text, type = 'user') {
+      function addMessageToTranscript(text, type = 'user', placeholder = false) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
         
@@ -621,7 +723,11 @@
         
         const content = document.createElement('div');
         content.className = 'content';
-        content.textContent = text;
+        if (placeholder) {
+          content.textContent = '...';
+        } else {
+          content.textContent = text;
+        }
         
         messageDiv.appendChild(avatar);
         messageDiv.appendChild(content);
