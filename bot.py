@@ -38,29 +38,8 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
         # Only log TextFrames, not audio frames
         if not (hasattr(frame, '__class__') and frame.__class__.__name__ == 'OutputAudioRawFrame'):
             logger.info(f"Serializing frame type: {type(frame).__name__}")
-        
-        # Convert TextFrames to Transcription frames
-        if isinstance(frame, TextFrame) or isinstance(frame, LLMTextFrame):
-            # Get the text content
-            text = frame.text if hasattr(frame, 'text') else str(frame)
-            logger.info(f"Processing Text/LLMTextFrame: {text}")
             
-            # Create a transcription frame
-            transcription_frame = TranscriptionFrame(
-                text=text,
-                user_id="ai",  # Use user_id instead of speaker
-                timestamp=datetime.datetime.now().isoformat()
-            )
-            
-            # Use the parent's serialize method directly for the transcription frame
-            serialized = await super().serialize(transcription_frame)
-            logger.info(f"Created Transcription frame with user_id=ai")
-            
-            # We only want to return the transcription frame to avoid the list error
-            # Also send the original frame separately through the TextTranscriptionProcessor
-            return serialized
-        
-        # For all other frames, just use the normal serialization
+        # Use the normal serialization for all frames
         return await super().serialize(frame)
 
 # A custom processor to capture and convert LLM text frames directly
