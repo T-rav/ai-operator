@@ -307,6 +307,9 @@
       let aiDisplayTimer = null;
       let aiDisplaySpeed = 50; // ms per character (slower = more natural)
       let isDisplayingMessage = false;
+      let currentSpeechId = null; // Track current speech ID
+      let lastUserSpeakTimestamp = 0; // Track last user input time
+      let needNewAIRegion = true; // Flag to indicate a new AI region is needed
 
       let startBtn = document.getElementById('startAudioBtn');
       let stopBtn = document.getElementById('stopAudioBtn');
@@ -424,16 +427,22 @@
                       if (transcriptionFrame.text && transcriptionFrame.text.trim()) {
                           if (speaker === 'ai') {
                               // Queue AI messages for progressive display
-                              queueAIMessage(transcriptionFrame.text);
+                              queueAIMessage(transcriptionFrame.text, transcriptionFrame.timestamp);
                               isAIResponding = true;
                           } else {
                               // User messages displayed immediately
                               addMessageToTranscript(transcriptionFrame.text, speaker);
+                              
+                              // Update user speaking timestamp to recognize new AI responses
+                              lastUserSpeakTimestamp = Date.now();
+                              
+                              // Reset AI message tracking for next AI response
+                              resetAIMessageTracking();
                           }
                       }
                   }
                   
-                  // Handle audio messages - no logging here
+                  // Handle audio messages
                   if (parsedFrame.audio) {
                       enqueueAudioFromProto(arrayBuffer);
                   }
@@ -619,45 +628,105 @@
           }
           
           // Reset AI response tracking
+          resetAIMessageTracking();
           isAIResponding = false;
-          aiMessageQueue = [];
-          aiFullTranscript = "";
-          aiCurrentIndex = 0;
-          isDisplayingMessage = false;
       }
 
       function stopAudioBtnHandler() {
           stopAudio(true);
       }
 
+      // Reset AI message tracking for a new round of conversation
+      function resetAIMessageTracking() {
+          aiMessageQueue = [];
+          aiFullTranscript = "";
+          aiCurrentIndex = 0;
+          isDisplayingMessage = false;
+          currentSpeechId = null;
+          
+          if (aiDisplayTimer) {
+              clearTimeout(aiDisplayTimer);
+              aiDisplayTimer = null;
+          }
+      }
+
       // Queue AI messages for progressive display
-      function queueAIMessage(text) {
-          // If this is the first AI message, create a placeholder in the transcript
-          if (aiMessageQueue.length === 0 && !isDisplayingMessage) {
-              // Store the full text to display slowly
-              aiFullTranscript = text;
-              aiCurrentIndex = 0;
+      function queueAIMessage(text, timestamp) {
+          // Determine if this is a new speech response
+          const isFirstMessage = !currentSpeechId;
+          
+          // Always create a new region after user has spoken
+          if (needNewAIRegion || isFirstMessage) {
+              console.log("Creating new AI speech region");
               
-              // Create or update the AI message placeholder
-              const existingAiMessage = findAIMessage();
-              if (!existingAiMessage) {
-                  addMessageToTranscript('', 'ai', true);
+              // Complete any existing message display
+              if (isDisplayingMessage) {
+                  completeCurrentAIMessage();
               }
               
-              // Start the character-by-character display
+              // Start a new message
+              resetAIMessageTracking();
+              currentSpeechId = timestamp || Date.now().toString();
+              
+              // Store the text for this new message
+              aiFullTranscript = text;
+              
+              // Create a new AI message placeholder
+              addMessageToTranscript('', 'ai', true);
+              
+              // Start displaying character by character
               startProgressiveDisplay();
+              
+              // Reset the flag since we've created a new region
+              needNewAIRegion = false;
           } else {
-              // For subsequent messages, append to the full transcript
-              aiFullTranscript += " " + text;
+              // Same speech response, append to current transcript
+              if (aiFullTranscript) {
+                  aiFullTranscript += " " + text;
+              } else {
+                  aiFullTranscript = text;
+                  
+                  // Create a new message if none exists
+                  if (!findCurrentAIMessage()) {
+                      addMessageToTranscript('', 'ai', true);
+                  }
+                  
+                  // Start the display if not already running
+                  if (!isDisplayingMessage) {
+                      startProgressiveDisplay();
+                  }
+              }
           }
       }
       
-      // Find existing AI message if one exists
-      function findAIMessage() {
-          const messages = transcriptContainer.querySelectorAll('.message.ai');
-          return messages.length > 0 ? messages[messages.length - 1] : null;
+      // Complete the current AI message by finishing display
+      function completeCurrentAIMessage() {
+          if (!isDisplayingMessage) return;
+          
+          // Force completion of the current message
+          const aiMessage = findCurrentAIMessage();
+          if (aiMessage) {
+              const content = aiMessage.querySelector('.content');
+              content.textContent = aiFullTranscript;
+          }
+          
+          // Reset display state
+          isDisplayingMessage = false;
+          if (aiDisplayTimer) {
+              clearTimeout(aiDisplayTimer);
+              aiDisplayTimer = null;
+          }
       }
       
+      // Find the current AI message
+      function findCurrentAIMessage() {
+          const messages = transcriptContainer.querySelectorAll('.message.ai');
+          if (messages.length === 0) return null;
+          
+          // Return the last AI message
+          return messages[messages.length - 1];
+      }
+
       // Process the AI message queue progressively
       function processAIMessageQueue() {
           // Just trigger the progressive display if not already running
@@ -696,8 +765,8 @@
       
       // Update the AI transcript with new text
       function updateAITranscript(text) {
-          // Get the last message if it's from AI
-          const aiMessage = findAIMessage();
+          // Get the current AI message
+          const aiMessage = findCurrentAIMessage();
           
           if (aiMessage) {
               // Update existing AI message
@@ -735,6 +804,12 @@
         
         // Scroll to bottom
         transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+        
+        // If this is a user message, set flag for next AI response to be in new region
+        if (type === 'user') {
+          needNewAIRegion = true;
+          lastUserSpeakTimestamp = Date.now();
+        }
       }
 
       startBtn.addEventListener('click', startAudioBtnHandler);
