@@ -12,40 +12,45 @@ syntax = "proto3";
 
 package pipecat;
 
-message TextFrame {
-  uint64 id = 1;
-  string name = 2;
-  string text = 3;
-}
-
-message AudioRawFrame {
-  uint64 id = 1;
-  string name = 2;
-  bytes audio = 3;
-  uint32 sample_rate = 4;
-  uint32 num_channels = 5;
-  optional uint64 pts = 6;
-}
-
-message TranscriptionFrame {
-  uint64 id = 1;
-  string name = 2;
-  string text = 3;
-  string user_id = 4;
-  string timestamp = 5;
-}
-
-message MessageFrame {
-  string data = 1;
-}
-
+// Frame message structure
 message Frame {
-  oneof frame {
-    TextFrame text = 1;
-    AudioRawFrame audio = 2;
+  oneof data {
+    AudioFrame audio = 1;
+    TextFrame text = 2;
     TranscriptionFrame transcription = 3;
     MessageFrame message = 4;
   }
+}
+
+// Audio frame structure
+message AudioFrame {
+  uint64 id = 1;
+  string name = 2;
+  bytes audio = 3;
+  int32 sample_rate = 4;
+  int32 num_channels = 5;
+  string text = 6; // Optional text associated with audio
+}
+
+// Text frame structure
+message TextFrame {
+  string text = 1;
+  string user_id = 2;
+  string timestamp = 3;
+}
+
+// Transcription frame structure
+message TranscriptionFrame {
+  string text = 1;
+  string user_id = 2;
+  string timestamp = 3;
+}
+
+// Generic message frame
+message MessageFrame {
+  string type = 1;
+  string content = 2;
+  string timestamp = 3;
 }
 
 message Audio {
