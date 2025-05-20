@@ -7,12 +7,13 @@
 import asyncio
 import os
 import sys
+import time
 
 from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import BotInterruptionFrame, EndFrame
+from pipecat.frames.frames import BotInterruptionFrame, EndFrame, TranscriptionFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -78,6 +79,22 @@ class SessionTimeoutHandler:
             logger.error(f"Error during call termination: {e}")
 
 
+async def handle_ai_response(frame, context, transport):
+    """Captures the AI's text response and sends it as a TranscriptionFrame to the client."""
+    try:
+        if frame and hasattr(frame, "text") and frame.text:
+            transcription_frame = TranscriptionFrame()
+            transcription_frame.text = frame.text
+            transcription_frame.user_id = "ai"
+            transcription_frame.timestamp = str(int(time.time()))
+            
+            # Send the transcription frame to the client
+            await transport.send_frame(transcription_frame)
+    except Exception as e:
+        logger.error(f"Error handling AI response: {e}")
+    
+    return [frame]
+
 async def main():
     transport = WebsocketServerTransport(
         params=WebsocketServerParams(
@@ -119,6 +136,12 @@ async def main():
             stt,  # Speech-To-Text
             context_aggregator.user(),
             llm,  # LLM
+            # Add a component to capture AI text and send it as a TranscriptionFrame
+            Pipeline.processor(
+                lambda frame, context: handle_ai_response(frame, context, transport)
+                if frame and hasattr(frame, "text") and frame.text
+                else [frame]
+            ),
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
             context_aggregator.assistant(),

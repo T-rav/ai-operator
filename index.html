@@ -385,7 +385,21 @@
               // Handle transcription messages
               if (parsedFrame?.transcription) {
                   console.log('Transcription:', parsedFrame.transcription.text); // Debug log
-                  addMessageToTranscript(parsedFrame.transcription.text, 'user');
+                  
+                  // Check if this is an AI transcription
+                  if (parsedFrame.transcription.user_id === "ai") {
+                      if (isAIResponding) {
+                          // Update existing AI message if already showing
+                          updateAIMessage(parsedFrame.transcription.text);
+                      } else {
+                          // Add new AI message
+                          isAIResponding = true;
+                          addMessageToTranscript(parsedFrame.transcription.text, 'ai');
+                      }
+                  } else {
+                      // Handle user transcription as before
+                      addMessageToTranscript(parsedFrame.transcription.text, 'user');
+                  }
               }
               
               // Handle audio messages
@@ -424,10 +438,10 @@
               source.start(playTime);
               playTime = playTime + buffer.duration;
 
-              // Add AI message only when we first start receiving audio
+              // Only add a placeholder AI message if we haven't received a transcription yet
               if (!isAIResponding) {
                   isAIResponding = true;
-                  addMessageToTranscript('AI response...', 'ai');
+                  addMessageToTranscript('AI is thinking...', 'ai');
               }
           });
       }
@@ -585,6 +599,21 @@
         messageDiv.appendChild(content);
         transcriptContainer.appendChild(messageDiv);
         
+        // Scroll to bottom
+        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+      }
+      
+      // Function to update the last AI message in the transcript
+      function updateAIMessage(text) {
+        // Find the last AI message in the transcript
+        const messages = transcriptContainer.querySelectorAll('.message.ai');
+        if (messages.length > 0) {
+          const lastAIMessage = messages[messages.length - 1];
+          const content = lastAIMessage.querySelector('.content');
+          if (content) {
+            content.textContent = text;
+          }
+        }
         // Scroll to bottom
         transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
       }
