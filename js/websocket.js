@@ -114,6 +114,10 @@ function handleWebSocketOpen(event) {
     source.connect(scriptProcessor);
     scriptProcessor.connect(audioContext.destination);
 
+    // Variables for better speech detection
+    let consecutiveFramesAboveThreshold = 0;
+    const requiredConsecutiveFrames = 3; // Require multiple frames above threshold before triggering
+    
     scriptProcessor.onaudioprocess = (event) => {
       if (!ws) {
         return;
@@ -134,19 +138,31 @@ function handleWebSocketOpen(event) {
       const encodedFrame = new Uint8Array(Frame.encode(frame).finish());
       ws.send(encodedFrame);
 
-      // Check for speech
+      // Check for speech with improved detection
       const rms = calculateRMS(audioData);
-      if (rms > 0.01) { // Adjust threshold as needed
-        if (!isSpeaking) {
+      const speechThreshold = 0.03; // Increased threshold to reduce false positives
+      
+      if (rms > speechThreshold) {
+        consecutiveFramesAboveThreshold++;
+        
+        // Only consider it speech if we've had multiple frames above threshold
+        if (!isSpeaking && consecutiveFramesAboveThreshold >= requiredConsecutiveFrames) {
           isSpeaking = true;
           addMessageToTranscript('User speaking...', 'user');
+          console.log('Speech detected, RMS:', rms);
         }
+        
         if (silenceTimeout) {
           clearTimeout(silenceTimeout);
         }
+        
         silenceTimeout = setTimeout(() => {
           isSpeaking = false;
-        }, 1000); // Adjust timeout as needed
+          console.log('Speech ended, silence detected');
+        }, 1500); // Longer timeout (1.5 seconds) for more stable detection
+      } else {
+        // Reset consecutive frames counter when below threshold
+        consecutiveFramesAboveThreshold = 0;
       }
     };
   }).catch((error) => console.error('Error accessing microphone:', error));
