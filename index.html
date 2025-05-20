@@ -381,19 +381,34 @@
           if (isPlaying) {
               try {
                   const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
-                  const frameType = parsedFrame.frame;
-                  console.log('Received frame type:', frameType);
                   
-                  // Log entire frame for debugging
-                  console.log('Complete frame data:', JSON.stringify(parsedFrame));
+                  // Check what type of frame was received
+                  let frameType = null;
+                  if (parsedFrame.transcription) frameType = "transcription";
+                  else if (parsedFrame.audio) frameType = "audio";
+                  else if (parsedFrame.text) frameType = "text";
+                  else if (parsedFrame.message) frameType = "message";
+                  else frameType = "unknown";
+                  
+                  // Only log non-audio frames
+                  if (frameType !== "audio") {
+                      console.log('Received frame type:', frameType);
+                      // Log entire frame for debugging
+                      console.log('Complete frame data:', JSON.stringify(parsedFrame));
+                  }
 
                   // Handle transcription messages
                   if (parsedFrame.transcription) {
-                      console.log('Transcription received:', parsedFrame.transcription);
+                      console.log('Transcription received:', JSON.stringify(parsedFrame.transcription));
+                      
+                      // Display detailed information about the transcription frame
+                      const transcriptionFrame = parsedFrame.transcription;
+                      console.log(`Transcription details - text: "${transcriptionFrame.text}", user_id: "${transcriptionFrame.user_id}", timestamp: "${transcriptionFrame.timestamp}"`);
                       
                       // Use user_id to determine if this is from user or AI
-                      const speaker = parsedFrame.transcription.user_id === 'ai' ? 'ai' : 'user';
-                      addMessageToTranscript(parsedFrame.transcription.text, speaker);
+                      const speaker = transcriptionFrame.user_id === 'ai' ? 'ai' : 'user';
+                      console.log(`Adding message to transcript as speaker: ${speaker}`);
+                      addMessageToTranscript(transcriptionFrame.text, speaker);
                       
                       // If this is an AI transcription, set the responding flag
                       if (speaker === 'ai') {
@@ -401,7 +416,7 @@
                       }
                   }
                   
-                  // Handle audio messages
+                  // Handle audio messages - no logging here
                   if (parsedFrame.audio) {
                       enqueueAudioFromProto(arrayBuffer);
                   }
@@ -412,6 +427,8 @@
                   }
               } catch (error) {
                   console.error('Error decoding frame:', error);
+                  // Log the raw data length to help diagnose issues
+                  console.log('Raw data length:', event.data.byteLength);
               }
           }
       }
@@ -429,7 +446,7 @@
           }
           lastMessageTime = audioContext.currentTime;
 
-          // Get the audio data from the message
+          // Get the audio data from the message without logging it
           const audioData = parsedFrame.audio.audio;
           
           // Convert to proper Uint8Array

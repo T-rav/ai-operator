@@ -48,6 +48,7 @@ class TextTranscriptionProcessor(FrameProcessor):
         super().__init__()
         self.transport = transport
         self.serializer = serializer
+        self.client = None  # Add a client attribute to store the connection
         logger.info("TextTranscriptionProcessor initialized")
     
     async def process_frame(self, frame, direction=None):
@@ -66,16 +67,39 @@ class TextTranscriptionProcessor(FrameProcessor):
                 timestamp=datetime.datetime.now().isoformat()
             )
             
+            # First pass through the original frame for TTS conversion
+            await self.push_frame(frame, direction)
+            
+            # Then directly send the transcription frame to the transport's output
+            # This bypasses the normal pipeline flow to ensure it reaches the client
             try:
-                # Send the transcription frame directly to the pipeline output
-                # instead of trying to send it through the client's websocket directly
-                await self.push_frame(transcription_frame, direction)
-                logger.info(f"Sent AI speech transcription to pipeline: {text}")
+                # Serialize the transcription frame
+                serialized_frame = await self.serializer.serialize(transcription_frame)
+                
+                # Try using our stored client reference first
+                if self.client is not None:
+                    logger.info(f"Sending transcription frame directly to client: {text}")
+                    await self.client.send(serialized_frame)
+                # Otherwise try transport methods
+                elif hasattr(self.transport, 'broadcast'):
+                    logger.info(f"Broadcasting transcription frame to all clients: {text}")
+                    await self.transport.broadcast(serialized_frame)
+                elif hasattr(self.transport, '_client') and self.transport._client:
+                    logger.info(f"Sending transcription frame using transport._client: {text}")
+                    await self.transport._client.send(serialized_frame)
+                else:
+                    logger.warning(f"No method to send transcription frame to client, pushing to pipeline instead: {text}")
+                    # Use WebsocketServerOutputTransport for output
+                    if hasattr(self.transport, 'output'):
+                        await self.transport.output().push_frame(transcription_frame, FrameDirection.DOWNSTREAM)
+                    else:
+                        # Last resort: push to normal pipeline
+                        await self.push_frame(transcription_frame, direction)
             except Exception as e:
                 logger.error(f"Error sending transcription frame: {e}")
-            
-            # Pass through the original frame too
-            await self.push_frame(frame, direction)
+                # Try the pipeline as fallback
+                await self.push_frame(transcription_frame, direction)
+                
             logger.info(f"TextTranscriptionProcessor: Processed AI speech: {text}")
         else:
             # For any non-LLMTextFrame, just pass it through
@@ -195,6 +219,9 @@ async def main():
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
+        # Make the client accessible to our processor
+        text_processor.client = client  # Store the client connection
+        logger.info(f"Client connected and stored in TextTranscriptionProcessor: {client.remote_address}")
         # Kick off the conversation.
         messages.append({"role": "system", "content": "Please introduce yourself to the user."})
         await task.queue_frames([context_aggregator.user().get_context_frame()])
