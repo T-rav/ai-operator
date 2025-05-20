@@ -19,6 +19,7 @@ message Frame {
     TextFrame text = 2;
     TranscriptionFrame transcription = 3;
     MessageFrame message = 4;
+    StartInterruptionFrame start_interruption = 5;
   }
 }
 
@@ -51,6 +52,12 @@ message MessageFrame {
   string type = 1;
   string content = 2;
   string timestamp = 3;
+}
+
+// Interruption frame to signal when to interrupt the AI
+message StartInterruptionFrame {
+  string user_id = 1;
+  string timestamp = 2;
 }
 
 message Audio {
