@@ -7,12 +7,13 @@
 import asyncio
 import os
 import sys
+import datetime
 
 from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import BotInterruptionFrame, EndFrame, TextFrame
+from pipecat.frames.frames import BotInterruptionFrame, EndFrame, TextFrame, LLMTextFrame, TranscriptionFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -25,28 +26,81 @@ from pipecat.transports.network.websocket_server import (
     WebsocketServerParams,
     WebsocketServerTransport,
 )
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-# Custom serializer that intercepts TextFrames and adds AI speech data
+# Custom serializer that converts TextFrames to Transcription frames
 class CustomProtobufSerializer(ProtobufFrameSerializer):
-    def serialize(self, frame):
-        # Intercept TextFrames from assistant to add AI speech
-        if isinstance(frame, TextFrame) and frame.role == 'assistant':
-            # Create the normal serialized data
-            serialized = super().serialize(frame)
+    def __init__(self):
+        super().__init__()
+        logger.info("CustomProtobufSerializer initialized")
+
+    async def serialize(self, frame):
+        # Only log TextFrames, not audio frames
+        if not (hasattr(frame, '__class__') and frame.__class__.__name__ == 'OutputAudioRawFrame'):
+            logger.info(f"Serializing frame type: {type(frame).__name__}")
+        
+        # Convert TextFrames to Transcription frames
+        if isinstance(frame, TextFrame) or isinstance(frame, LLMTextFrame):
+            # Get the text content
+            text = frame.text if hasattr(frame, 'text') else str(frame)
+            logger.info(f"Processing Text/LLMTextFrame: {text}")
             
-            # Also create an "AI speech" message with the same text
-            ai_speech_data = {
-                "aiSpeech": {
-                    "text": frame.text,
-                    "is_final": frame.is_final if hasattr(frame, 'is_final') else False
-                }
-            }
+            # Create a transcription frame
+            transcription_frame = TranscriptionFrame(
+                text=text,
+                user_id="ai",  # Use user_id instead of speaker
+                timestamp=datetime.datetime.now().isoformat()
+            )
             
-            # Return both the normal message and our custom AI speech message
-            return [serialized, ai_speech_data]
+            # Use the parent's serialize method directly for the transcription frame
+            serialized = await super().serialize(transcription_frame)
+            logger.info(f"Created Transcription frame with user_id=ai")
+            
+            # We only want to return the transcription frame to avoid the list error
+            # Also send the original frame separately through the TextTranscriptionProcessor
+            return serialized
         
         # For all other frames, just use the normal serialization
-        return super().serialize(frame)
+        return await super().serialize(frame)
+
+# A custom processor to capture and convert LLM text frames directly
+class TextTranscriptionProcessor(FrameProcessor):
+    def __init__(self, transport, serializer):
+        super().__init__()
+        self.transport = transport
+        self.serializer = serializer
+        logger.info("TextTranscriptionProcessor initialized")
+    
+    async def process_frame(self, frame, direction=None):
+        # Make sure to call the parent's process_frame method first
+        await super().process_frame(frame, direction)
+        
+        # If this is an LLMTextFrame, create a transcription frame
+        if isinstance(frame, LLMTextFrame):
+            text = frame.text if hasattr(frame, 'text') else str(frame)
+            logger.info(f"TextTranscriptionProcessor: Processing LLMTextFrame: {text}")
+            
+            # Create a proper TranscriptionFrame object instead of a dictionary
+            transcription_frame = TranscriptionFrame(
+                text=text,
+                user_id="ai",  # Use user_id instead of speaker
+                timestamp=datetime.datetime.now().isoformat()
+            )
+            
+            try:
+                # Send the transcription frame directly to the pipeline output
+                # instead of trying to send it through the client's websocket directly
+                await self.push_frame(transcription_frame, direction)
+                logger.info(f"Sent AI speech transcription to pipeline: {text}")
+            except Exception as e:
+                logger.error(f"Error sending transcription frame: {e}")
+            
+            # Pass through the original frame too
+            await self.push_frame(frame, direction)
+            logger.info(f"TextTranscriptionProcessor: Processed AI speech: {text}")
+        else:
+            # For any non-LLMTextFrame, just pass it through
+            await self.push_frame(frame, direction)
 
 load_dotenv(override=True)
 
@@ -125,6 +179,9 @@ async def main():
         voice_id="71a7ad14-091c-4e8e-a314-022ece01c121"
     )
 
+    # Create our custom processor to handle text frames
+    text_processor = TextTranscriptionProcessor(transport, serializer)
+
     messages = [
         {
             "role": "system",
@@ -141,6 +198,7 @@ async def main():
             stt,  # Speech-To-Text
             context_aggregator.user(),
             llm,  # LLM
+            text_processor,  # Our custom processor to handle LLM text
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
             context_aggregator.assistant(),
@@ -177,3 +235,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

@@ -35,11 +35,16 @@ message TranscriptionFrame {
   string timestamp = 5;
 }
 
+message MessageFrame {
+  string data = 1;
+}
+
 message Frame {
-  oneof payload {
-    Audio audio = 1;
-    Transcription transcription = 2;
-    AISpeech aiSpeech = 3;
+  oneof frame {
+    TextFrame text = 1;
+    AudioRawFrame audio = 2;
+    TranscriptionFrame transcription = 3;
+    MessageFrame message = 4;
   }
 }
 

@@ -379,55 +379,46 @@
       function handleWebSocketMessage(event) {
           const arrayBuffer = event.data;
           if (isPlaying) {
-              const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
-              console.log('Received frame:', parsedFrame); // Debug log
+              try {
+                  const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
+                  const frameType = parsedFrame.frame;
+                  console.log('Received frame type:', frameType);
+                  
+                  // Log entire frame for debugging
+                  console.log('Complete frame data:', JSON.stringify(parsedFrame));
 
-              // Handle transcription messages
-              if (parsedFrame?.transcription) {
-                  console.log('Transcription:', parsedFrame.transcription.text); // Debug log
-                  
-                  // Determine if this is a user or AI transcription
-                  const speaker = parsedFrame.transcription.speaker || 'user';
-                  addMessageToTranscript(parsedFrame.transcription.text, speaker);
-              }
-              
-              // Handle AI speech transcription if it exists
-              if (parsedFrame?.aiSpeech && parsedFrame.aiSpeech.text) {
-                  console.log('AI Speech:', parsedFrame.aiSpeech.text);
-                  
-                  // If this is our first AI response in this exchange, create a new message
-                  if (!isAIResponding) {
-                      isAIResponding = true;
-                      addMessageToTranscript(parsedFrame.aiSpeech.text, 'ai');
-                  } else {
-                      // Update the last AI message in the transcript
-                      updateLastAIMessage(parsedFrame.aiSpeech.text);
+                  // Handle transcription messages
+                  if (parsedFrame.transcription) {
+                      console.log('Transcription received:', parsedFrame.transcription);
+                      
+                      // Use user_id to determine if this is from user or AI
+                      const speaker = parsedFrame.transcription.user_id === 'ai' ? 'ai' : 'user';
+                      addMessageToTranscript(parsedFrame.transcription.text, speaker);
+                      
+                      // If this is an AI transcription, set the responding flag
+                      if (speaker === 'ai') {
+                          isAIResponding = true;
+                      }
                   }
+                  
+                  // Handle audio messages
+                  if (parsedFrame.audio) {
+                      enqueueAudioFromProto(arrayBuffer);
+                  }
+                  
+                  // Handle text messages directly
+                  if (parsedFrame.text) {
+                      console.log('Text received:', parsedFrame.text);
+                  }
+              } catch (error) {
+                  console.error('Error decoding frame:', error);
               }
-              
-              // Handle audio messages
-              if (parsedFrame?.audio) {
-                  enqueueAudioFromProto(arrayBuffer);
-              }
-          }
-      }
-
-      // Function to update the last AI message in the transcript
-      function updateLastAIMessage(text) {
-          const aiMessages = transcriptContainer.querySelectorAll('.message.ai');
-          if (aiMessages.length > 0) {
-              const lastAIMessage = aiMessages[aiMessages.length - 1];
-              const content = lastAIMessage.querySelector('.content');
-              content.textContent = text;
-          } else {
-              // If no AI message exists yet, create one
-              addMessageToTranscript(text, 'ai');
           }
       }
 
       function enqueueAudioFromProto(arrayBuffer) {
           const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
-          if (!parsedFrame?.audio) {
+          if (!parsedFrame.audio) {
               return false;
           }
 
@@ -438,10 +429,11 @@
           }
           lastMessageTime = audioContext.currentTime;
 
-          // We should be able to use parsedFrame.audio.audio.buffer but for
-          // some reason that contains all the bytes from the protobuf message.
-          const audioVector = Array.from(parsedFrame.audio.audio);
-          const audioArray = new Uint8Array(audioVector);
+          // Get the audio data from the message
+          const audioData = parsedFrame.audio.audio;
+          
+          // Convert to proper Uint8Array
+          const audioArray = new Uint8Array(audioData);
 
           audioContext.decodeAudioData(audioArray.buffer, function(buffer) {
               const source = new AudioBufferSourceNode(audioContext);
@@ -453,13 +445,6 @@
               
               source.start(playTime);
               playTime = playTime + buffer.duration;
-
-              // Add AI message only when we first start receiving audio
-              // and if we don't already have an AI speech transcription
-              if (!isAIResponding && !parsedFrame.aiSpeech) {
-                  isAIResponding = true;
-                  addMessageToTranscript('AI response...', 'ai');
-              }
           });
       }
 
@@ -501,7 +486,9 @@
                   const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
                   const frame = Frame.create({
                       audio: {
-                          audio: Array.from(pcmByteArray),
+                          id: 0,
+                          name: "InputAudioRawFrame",
+                          audio: pcmByteArray,
                           sampleRate: SAMPLE_RATE,
                           numChannels: NUM_CHANNELS
                       }
