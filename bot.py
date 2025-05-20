@@ -101,9 +101,9 @@ async def main():
             serializer=ProtobufFrameSerializer(),
             audio_out_enabled=True,
             add_wav_header=True,
-            vad_enabled=True,
+            audio_in_enabled=True,  # Changed from vad_enabled
             vad_analyzer=SileroVADAnalyzer(),
-            vad_audio_passthrough=True,
+            audio_in_passthrough=True,  # Changed from vad_audio_passthrough
             session_timeout=60 * 3,  # 3 minutes
         )
     )
@@ -137,7 +137,7 @@ async def main():
             context_aggregator.user(),
             llm,  # LLM
             # Add a component to capture AI text and send it as a TranscriptionFrame
-            Pipeline.processor(
+            Pipeline.map(
                 lambda frame, context: handle_ai_response(frame, context, transport)
                 if frame and hasattr(frame, "text") and frame.text
                 else [frame]
