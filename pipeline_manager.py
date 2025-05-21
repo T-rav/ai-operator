@@ -4,7 +4,7 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.pipeline.runner import PipelineRunner
 
 import config
-from processors import TextTranscriptionProcessor
+from processors import TextTranscriptionProcessor, UserTranscriptionProcessor
 
 
 class PipelineManager:
