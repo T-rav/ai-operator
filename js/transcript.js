@@ -21,62 +21,28 @@ function queueAIMessage(text, timestamp) {
     return;
   }
   
-  // Determine if this is a new speech response
-  const isFirstMessage = !currentSpeechId;
+  console.log("Adding new AI message: " + text);
   
-  // Check if this is a potential standalone message (common single message responses)
-  const isStandaloneMessage = text.endsWith('.') || text.endsWith('!') || text.endsWith('?');
-  
-  // Force a new message region if:
-  // - First message after user speaks
-  // - Very short complete response (likely a standalone message like "Sure thing!")
-  const forceNewMessage = needNewAIRegion || 
-                         isFirstMessage || 
-                         (isStandaloneMessage && text.length < 30) ||
-                         (currentSpeechId && Date.now() - Number(currentSpeechId) > 1000); // New message if >1s passed
-  
-  // Always create a new region for standalone messages or after user has spoken
-  if (forceNewMessage) {
-    console.log("Creating new AI speech region for: " + text);
-    
-    // Complete any existing message display
-    if (isDisplayingMessage) {
-      completeCurrentAIMessage();
-    }
-    
-    // Start a new message
-    resetAIMessageTracking();
-    currentSpeechId = timestamp || Date.now().toString();
-    
-    // Store the text for this new message
-    aiFullTranscript = text;
-    
-    // Create a new AI message placeholder
-    addMessageToTranscript('', 'ai', true);
-    
-    // Start displaying character by character
-    startProgressiveDisplay();
-    
-    // Reset the flag since we've created a new region
-    needNewAIRegion = false;
-  } else {
-    // Same speech response, append to current transcript
-    if (aiFullTranscript) {
-      aiFullTranscript += " " + text;
-    } else {
-      aiFullTranscript = text;
-      
-      // Create a new message if none exists
-      if (!findCurrentAIMessage()) {
-        addMessageToTranscript('', 'ai', true);
-      }
-      
-      // Start the display if not already running
-      if (!isDisplayingMessage) {
-        startProgressiveDisplay();
-      }
-    }
+  // Complete any existing message that's being displayed
+  if (isDisplayingMessage) {
+    completeCurrentAIMessage();
   }
+  
+  // Reset tracking for the new message
+  resetAIMessageTracking();
+  currentSpeechId = timestamp || Date.now().toString();
+  
+  // Store the text for this new message
+  aiFullTranscript = text;
+  
+  // Create a new AI message placeholder
+  addMessageToTranscript('', 'ai', true);
+  
+  // Start displaying character by character
+  startProgressiveDisplay();
+  
+  // Reset the flag
+  needNewAIRegion = false;
 }
 
 // Complete the current AI message by finishing display
@@ -121,19 +87,8 @@ function findCurrentAIMessage() {
   const messages = transcriptContainer.querySelectorAll('.message.ai');
   if (messages.length === 0) return null;
   
-  // Check if the last message is complete or still being edited
-  const lastMessage = messages[messages.length - 1];
-  const content = lastMessage.querySelector('.content');
-  
-  // If this message is still a placeholder or being edited, return it
-  if (content.textContent === '...' || isDisplayingMessage) {
-    return lastMessage;
-  }
-  
-  // If we get here, the message is complete, so return null to 
-  // indicate we should create a new message instead of appending
-  console.log("Last AI message is complete, will create new one for next text");
-  return null;
+  // Return the last AI message
+  return messages[messages.length - 1];
 }
 
 // Process the AI message queue progressively
