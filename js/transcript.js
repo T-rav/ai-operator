@@ -18,7 +18,6 @@ function resetAIMessageTracking() {
 function queueAIMessage(text, timestamp) {
   // If AI has been interrupted, don't queue new messages
   if (!isAIResponding) {
-    console.log('Ignoring new AI message due to interruption');
     return;
   }
   
