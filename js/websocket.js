@@ -36,7 +36,7 @@ function initWebSocket() {
         reason: event.reason,
         wasClean: event.wasClean
       });
-      stopAudio(false);
+      stopAudio(true);
     });
     ws.addEventListener('error', (event) => {
       console.error('WebSocket error occurred:', event);
@@ -50,7 +50,7 @@ function initWebSocket() {
         // If we get an error during connection, clean up
         if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.CLOSING) {
           console.log('WebSocket errored during connection/closing, stopping audio');
-          stopAudio(false);
+          stopAudio(true);
         }
       }
     });
@@ -164,10 +164,8 @@ function handleWebSocketOpen(event) {
       echoCancellation: true,
       noiseSuppression: true,
     }
-  }).then((stream) => {
+  }).then(async (stream) => {
     microphoneStream = stream;
-    // 512 is closest thing to 200ms.
-    scriptProcessor = audioContext.createScriptProcessor(512, 1, 1);
     source = audioContext.createMediaStreamSource(stream);
     
     // Set up visualizer for input
@@ -177,140 +175,89 @@ function handleWebSocketOpen(event) {
     dataArray = new Uint8Array(analyser.frequencyBinCount);
     drawVisualizer();
 
-    // Connect input to script processor and destination
-    source.connect(scriptProcessor);
-    scriptProcessor.connect(audioContext.destination);
-
-    // Variables for better speech detection
-    let consecutiveFramesAboveThreshold = 0;
-    const requiredConsecutiveFrames = 3; // Require multiple frames above threshold before triggering
-    
-    scriptProcessor.onaudioprocess = (event) => {
-      // Only process audio if WebSocket is open and ready
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
-      const audioData = event.inputBuffer.getChannelData(0);
-      const pcmS16Array = convertFloat32ToS16PCM(audioData);
-      const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
+    try {
+      // Load and register the audio worklet
+      await audioContext.audioWorklet.addModule('js/audio-worklet-processor.js');
       
-      try {
-        // Log first frame data details for debugging
-        if (!window.firstFrameSent) {
-          console.log('Creating first audio frame:');
-          console.log('- PCM array type:', pcmS16Array.constructor.name);
-          console.log('- PCM byte array type:', pcmByteArray.constructor.name);
-          console.log('- Byte array length:', pcmByteArray.length);
-          console.log('- Sample rate:', SAMPLE_RATE);
-          console.log('- Num channels:', NUM_CHANNELS);
-          window.firstFrameSent = true;
+      // Create AudioWorkletNode
+      const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: NUM_CHANNELS,
+        processorOptions: {
+          sampleRate: SAMPLE_RATE
         }
-        
-        // Create frame matching server's expected format
-        const frame = {
-          // Must match server's oneof field name 'frame'
-          frame: {
-            // Use 'audio' as the field choice in the oneof
-            oneofKind: "audio", 
-            audio: {
-              id: 0,
-              // CRITICAL: Match the exact type name expected by server
-              name: "AudioRawFrame",
-              audio: pcmByteArray,
-              sample_rate: SAMPLE_RATE, // Use snake_case
-              num_channels: NUM_CHANNELS, // Use snake_case
-              pts: 0 // Add missing pts field
-            }
-          }
-        };
-        
-        // Log frame structure info for first frame
-        if (window.firstFrameSentComplete === undefined) {
-          console.log('First frame structure:', JSON.stringify(frame, (key, value) => {
-            if (key === 'audio' && value && value.audio) {
-              return `[Uint8Array: ${value.audio.length} bytes]`;
-            }
-            return value;
-          }));
-          window.firstFrameSentComplete = true;
-        }
-        
-        // Check if socket is still open before encoding and sending
-        if (ws.readyState !== WebSocket.OPEN) {
-          console.warn('WebSocket no longer open, skipping audio frame');
-          return;
-        }
+      });
 
-        // Create the protobuf message with explicit creation
-        const protoFrame = Frame.create(frame);
-        
-        // Encode with explicit finish() to ensure proper formatting
-        const encodedFrame = Frame.encode(protoFrame).finish();
-        
-        // Log encoded frame for first frame
-        if (window.firstFrameEncoded === undefined) {
-          console.log('First encoded frame:');
-          console.log('- Type:', encodedFrame.constructor.name);
-          console.log('- Length:', encodedFrame.byteLength, 'bytes');
-          console.log('- First 16 bytes:', Array.from(encodedFrame.slice(0, 16)));
-          window.firstFrameEncoded = true;
-        }
-        
-        // Ensure we have valid data to send (not empty)
-        if (encodedFrame.byteLength === 0) {
-          console.warn('Empty frame detected, not sending');
-          return;
-        }
-        
-        // Send with error handling
-        try {
-          // Convert to Uint8Array for sending
-          ws.send(encodedFrame);
-        } catch (wsError) {
-          console.error('Error sending audio frame:', wsError);
-          
-          // If connection is broken, attempt to stop audio cleanly
-          if (ws.readyState !== WebSocket.OPEN) {
-            stopAudio(false);
-          }
-        }
-      } catch (error) {
-        console.error('Error creating/sending audio frame:', error);
-      }
+      // Handle messages from the audio processor
+      audioWorkletNode.port.onmessage = (event) => {
+        const { type, audioData, rms } = event.data;
 
-      // Check for speech with improved detection
-      const rms = calculateRMS(audioData);
-      const speechThreshold = 0.03; // Increased threshold to reduce false positives
-      
-      if (rms > speechThreshold) {
-        consecutiveFramesAboveThreshold++;
-        
-        // Only consider it speech if we've had multiple frames above threshold
-        if (!isSpeaking && consecutiveFramesAboveThreshold >= requiredConsecutiveFrames) {
-          isSpeaking = true;
-          addMessageToTranscript('User speaking...', 'user');
-          console.log('Speech detected, RMS:', rms);
-          
-          // Check if AI is currently responding and send interruption if so
-          if (isAIResponding) {
-            sendInterruptionSignal();
-          }
+        switch (type) {
+          case 'audioData':
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const pcmS16Array = convertFloat32ToS16PCM(audioData);
+            const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
+            
+            try {
+              // Create frame matching server's expected format
+              const frame = {
+                frame: {
+                  oneofKind: "audio",
+                  audio: {
+                    id: 0,
+                    name: "AudioRawFrame",
+                    audio: pcmByteArray,
+                    sample_rate: SAMPLE_RATE,
+                    num_channels: NUM_CHANNELS,
+                    pts: 0
+                  }
+                }
+              };
+
+              // Create and encode the protobuf message
+              const protoFrame = Frame.create(frame);
+              const encodedFrame = Frame.encode(protoFrame).finish();
+
+              if (encodedFrame.byteLength > 0) {
+                ws.send(encodedFrame);
+              }
+            } catch (error) {
+              console.error('Error creating/sending audio frame:', error);
+            }
+            break;
+
+          case 'speechStart':
+            isSpeaking = true;
+            addMessageToTranscript('User speaking...', 'user');
+            console.log('Speech detected, RMS:', rms);
+            
+            if (isAIResponding) {
+              sendInterruptionSignal();
+            }
+            
+            if (silenceTimeout) {
+              clearTimeout(silenceTimeout);
+            }
+            break;
+
+          case 'speechEnd':
+            silenceTimeout = setTimeout(() => {
+              isSpeaking = false;
+              console.log('Speech ended, silence detected');
+            }, 1500);
+            break;
         }
-        
-        if (silenceTimeout) {
-          clearTimeout(silenceTimeout);
-        }
-        
-        silenceTimeout = setTimeout(() => {
-          isSpeaking = false;
-          console.log('Speech ended, silence detected');
-        }, 1500); // Longer timeout (1.5 seconds) for more stable detection
-      } else {
-        // Reset consecutive frames counter when below threshold
-        consecutiveFramesAboveThreshold = 0;
-      }
-    };
+      };
+
+      // Connect the audio processing pipeline
+      source.connect(audioWorkletNode);
+      audioWorkletNode.connect(audioContext.destination);
+
+    } catch (error) {
+      console.error('Error setting up AudioWorklet:', error);
+    }
   }).catch((error) => console.error('Error accessing microphone:', error));
 }
 
@@ -367,4 +314,57 @@ function stopAIAudio() {
   // Any additional audio stopping logic can be added here
   
   console.log('AI audio playback interrupted');
+}
+
+function stopAudio(closeWebsocket) {
+  playTime = 0;
+  isPlaying = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+
+  if (ws && closeWebsocket) {
+    ws.close();
+    ws = null;
+  }
+
+  if (source) {
+    source.disconnect();
+    source = null;
+  }
+  if (analyser) {
+    analyser.disconnect();
+    analyser = null;
+  }
+  if (animationFrame) {
+    cancelAnimationFrame(animationFrame);
+    animationFrame = null;
+  }
+  if (silenceTimeout) {
+    clearTimeout(silenceTimeout);
+    silenceTimeout = null;
+  }
+  if (aiDisplayTimer) {
+    clearTimeout(aiDisplayTimer);
+    aiDisplayTimer = null;
+  }
+  
+  // Stop any playing audio
+  stopAllAIAudio();
+  
+  // Reset AI response tracking
+  resetAIMessageTracking();
+  isAIResponding = false;
+
+  // Close the audio context
+  if (audioContext) {
+    audioContext.close().then(() => {
+      audioContext = null;
+    });
+  }
+
+  // Stop the microphone stream
+  if (microphoneStream) {
+    microphoneStream.getTracks().forEach(track => track.stop());
+    microphoneStream = null;
+  }
 } 
