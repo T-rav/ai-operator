@@ -12,33 +12,67 @@ syntax = "proto3";
 
 package pipecat;
 
-message TextFrame {
-  uint64 id = 1;
-  string name = 2;
-  string text = 3;
+// Frame message structure
+message Frame {
+  oneof data {
+    AudioFrame audio = 1;
+    TextFrame text = 2;
+    TranscriptionFrame transcription = 3;
+    MessageFrame message = 4;
+    StartInterruptionFrame start_interruption = 5;
+  }
 }
 
-message AudioRawFrame {
+// Audio frame structure
+message AudioFrame {
   uint64 id = 1;
   string name = 2;
   bytes audio = 3;
-  uint32 sample_rate = 4;
-  uint32 num_channels = 5;
-  optional uint64 pts = 6;
+  int32 sample_rate = 4;
+  int32 num_channels = 5;
+  string text = 6; // Optional text associated with audio
 }
 
+// Text frame structure
+message TextFrame {
+  string text = 1;
+  string user_id = 2;
+  string timestamp = 3;
+}
+
+// Transcription frame structure
 message TranscriptionFrame {
-  uint64 id = 1;
-  string name = 2;
-  string text = 3;
-  string user_id = 4;
-  string timestamp = 5;
+  string text = 1;
+  string user_id = 2;
+  string timestamp = 3;
 }
 
-message Frame {
-  oneof frame {
-    TextFrame text = 1;
-    AudioRawFrame audio = 2;
-    TranscriptionFrame transcription = 3;
-  }
+// Generic message frame
+message MessageFrame {
+  string type = 1;
+  string content = 2;
+  string timestamp = 3;
+}
+
+// Interruption frame to signal when to interrupt the AI
+message StartInterruptionFrame {
+  string user_id = 1;
+  string timestamp = 2;
+}
+
+message Audio {
+  repeated uint32 audio = 1;
+  uint32 sample_rate = 2;
+  uint32 num_channels = 3;
+}
+
+message Transcription {
+  string text = 1;
+  string speaker = 2;  // "user" or "ai"
+  bool is_final = 3;
+}
+
+message AISpeech {
+  string text = 1;
+  bool is_final = 2;
 }
