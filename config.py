@@ -21,7 +21,7 @@ SYSTEM_MESSAGE = {
 AUDIO_SAMPLE_RATE = 16000
 
 # Session configuration
-SESSION_TIMEOUT = 60 * 3  # 3 minutes
+SESSION_TIMEOUT = 60 * 5  # 5 minutes
 
 # API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
