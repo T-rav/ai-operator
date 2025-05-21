@@ -52,22 +52,52 @@ function enqueueAudioFromProto(arrayBuffer) {
       return false;
     }
 
-    // Skip the frame header (field tag + length)
-    let offset = 2;
-    
-    // Skip the frame ID and name fields
+    // Read the varint-encoded message length
+    let offset = 1;
+    let messageLength = 0;
+    let shift = 0;
     while (offset < bytes.length) {
-      const tag = bytes[offset];
+      const byte = bytes[offset];
+      messageLength |= (byte & 0x7F) << shift;
+      offset++;
+      if ((byte & 0x80) === 0) break;
+      shift += 7;
+    }
+
+    // Function to read a varint and return [value, newOffset]
+    function readVarint(startOffset) {
+      let value = 0;
+      let shift = 0;
+      let currentOffset = startOffset;
+      while (currentOffset < bytes.length) {
+        const byte = bytes[currentOffset];
+        value |= (byte & 0x7F) << shift;
+        currentOffset++;
+        if ((byte & 0x80) === 0) break;
+        shift += 7;
+      }
+      return [value, currentOffset];
+    }
+
+    // Function to read a length-delimited field and return [data, newOffset]
+    function readLengthDelimited(startOffset) {
+      const [length, newOffset] = readVarint(startOffset);
+      const data = bytes.slice(newOffset, newOffset + length);
+      return [data, newOffset + length];
+    }
+
+    // Parse the audio frame fields
+    while (offset < bytes.length) {
+      // Read field tag
+      const [tag, newOffset] = readVarint(offset);
+      offset = newOffset;
+      
       const fieldNum = tag >> 3;
       const wType = tag & 0x07;
-      offset++;
-      
-      if (fieldNum === 3) { // audio data field
-        const length = bytes[offset];
-        offset++;
-        
-        // Get the audio data
-        const audioData = bytes.slice(offset, offset + length);
+
+      if (fieldNum === 3 && wType === 2) { // audio data field
+        // Read the audio data
+        const [audioData, nextOffset] = readLengthDelimited(offset);
         
         // Reset play time if it's been a while we haven't played anything
         const diffTime = audioContext.currentTime - lastMessageTime;
@@ -81,7 +111,7 @@ function enqueueAudioFromProto(arrayBuffer) {
         
         // Convert bytes to float32 values
         const channelData = audioBuffer.getChannelData(0);
-        const int16View = new Int16Array(audioData.buffer);
+        const int16View = new Int16Array(audioData.buffer, audioData.byteOffset, audioData.length/2);
         
         // Fill the audio buffer with normalized values
         for (let i = 0; i < channelData.length; i++) {
@@ -125,21 +155,19 @@ function enqueueAudioFromProto(arrayBuffer) {
         playTime = playTime + audioBuffer.duration;
         
         return true;
-      }
-      
-      // Skip other fields based on wire type
-      switch (wType) {
-        case 0: // varint
-          while (bytes[offset] & 0x80) offset++;
-          offset++;
-          break;
-        case 2: // length-delimited
-          const len = bytes[offset];
-          offset += len + 1;
-          break;
-        default:
-          console.warn('Unexpected wire type in audio frame:', wType);
-          return false;
+      } else {
+        // Skip other fields based on wire type
+        switch (wType) {
+          case 0: // varint
+            [, offset] = readVarint(offset);
+            break;
+          case 2: // length-delimited
+            [, offset] = readLengthDelimited(offset);
+            break;
+          default:
+            console.warn('Unexpected wire type in audio frame:', wType);
+            return false;
+        }
       }
     }
     
