@@ -53,9 +53,11 @@ function handleWebSocketMessage(event) {
         // Only add to transcript if there's actual text
         if (transcriptionFrame.text && transcriptionFrame.text.trim()) {
           if (speaker === 'ai') {
+            // Always ensure the AI is in responding mode when we receive AI messages
+            isAIResponding = true;
+            
             // Queue AI messages for progressive display
             queueAIMessage(transcriptionFrame.text, transcriptionFrame.timestamp);
-            isAIResponding = true;
           } else {
             // User messages displayed immediately
             addMessageToTranscript(transcriptionFrame.text, speaker);
