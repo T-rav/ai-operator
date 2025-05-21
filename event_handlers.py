@@ -48,7 +48,7 @@ class EventHandlerManager:
             
             # Import config to access ASSISTANT_DESCRIPTION
             import config
-            self.messages.append({"role": "system", "content": f"Respond with: {config.ASSISTANT_DESCRIPTION}"})
+            self.messages.append({"role": "system", "content": f"{config.ASSISTANT_DESCRIPTION}"})
             
             logger.debug("Queueing context frame to start conversation")
             await self.task.queue_frames([self.context_aggregator.user().get_context_frame()])

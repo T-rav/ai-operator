@@ -31,6 +31,7 @@ message AudioFrame {
   int32 sample_rate = 4;
   int32 num_channels = 5;
   string text = 6; // Optional text associated with audio
+  int64 pts = 7; // Presentation timestamp
 }
 
 // Text frame structure
