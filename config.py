@@ -8,7 +8,7 @@ load_dotenv(override=True)
 
 # Configure logger
 logger.remove(0)
-logger.add(sys.stderr, level="DEBUG")
+logger.add(sys.stderr, level="INFO")
 
 # System message for LLM
 ASSISTANT_NAME = "Jeeves"
