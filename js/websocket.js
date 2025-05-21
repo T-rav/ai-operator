@@ -56,10 +56,10 @@ function handleWebSocketMessage(event) {
             // Always ensure the AI is in responding mode when we receive AI messages
             isAIResponding = true;
             
-            // Queue AI messages for progressive display
+            // For AI, queue up messages to be displayed progressively
             queueAIMessage(transcriptionFrame.text, transcriptionFrame.timestamp);
           } else {
-            // User messages displayed immediately
+            // For user speech, immediately display the message
             addMessageToTranscript(transcriptionFrame.text, speaker);
             
             // Update user speaking timestamp to recognize new AI responses

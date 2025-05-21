@@ -21,28 +21,49 @@ function queueAIMessage(text, timestamp) {
     return;
   }
   
-  console.log("Adding new AI message: " + text);
+  console.log("Processing AI message: " + text);
   
-  // Complete any existing message that's being displayed
-  if (isDisplayingMessage) {
-    completeCurrentAIMessage();
+  // For first message or after user speaks, start a new message group
+  if (needNewAIRegion || !currentSpeechId) {
+    console.log("Starting new message group");
+    
+    // Complete any existing message display
+    if (isDisplayingMessage) {
+      completeCurrentAIMessage();
+    }
+    
+    // Start a new message
+    resetAIMessageTracking();
+    currentSpeechId = timestamp || Date.now().toString();
+    
+    // Store the text for this new message
+    aiFullTranscript = text;
+    
+    // Create a new AI message placeholder
+    addMessageToTranscript('', 'ai', true);
+    
+    // Start displaying character by character
+    startProgressiveDisplay();
+    
+    // Reset the flag
+    needNewAIRegion = false;
+  } else {
+    // Add to the existing message if it's from the same "turn"
+    console.log("Appending to existing message group: " + text);
+    
+    // Add a space before appending if the current text doesn't end with a space
+    if (aiFullTranscript && !aiFullTranscript.endsWith(' ')) {
+      aiFullTranscript += " " + text;
+    } else {
+      aiFullTranscript += text;
+    }
+    
+    // If we're not currently displaying text (i.e., we've finished the previous part)
+    // restart the display process
+    if (!isDisplayingMessage) {
+      startProgressiveDisplay();
+    }
   }
-  
-  // Reset tracking for the new message
-  resetAIMessageTracking();
-  currentSpeechId = timestamp || Date.now().toString();
-  
-  // Store the text for this new message
-  aiFullTranscript = text;
-  
-  // Create a new AI message placeholder
-  addMessageToTranscript('', 'ai', true);
-  
-  // Start displaying character by character
-  startProgressiveDisplay();
-  
-  // Reset the flag
-  needNewAIRegion = false;
 }
 
 // Complete the current AI message by finishing display
