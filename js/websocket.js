@@ -7,9 +7,29 @@ function initWebSocket() {
     // This is so `event.data` is already an ArrayBuffer.
     ws.binaryType = 'arraybuffer';
 
-    ws.addEventListener('open', handleWebSocketOpen);
+    // Set a reasonable timeout for detecting connection issues
+    let connectionTimeout = setTimeout(() => {
+      if (ws && ws.readyState !== WebSocket.OPEN) {
+        console.error('WebSocket connection timed out');
+        // Clean up the pending connection
+        ws.close();
+        ws = null;
+        // Reset UI to allow new connection attempt
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+        alert('Connection to server failed. Please try again.');
+      }
+    }, 5000);
+
+    ws.addEventListener('open', (event) => {
+      // Clear timeout as connection succeeded
+      clearTimeout(connectionTimeout);
+      handleWebSocketOpen(event);
+    });
     ws.addEventListener('message', handleWebSocketMessage);
     ws.addEventListener('close', (event) => {
+      // Clear timeout if it's still active
+      clearTimeout(connectionTimeout);
       console.log('WebSocket connection closed.', event.code, event.reason);
       console.log('WebSocket close event details:', {
         code: event.code,
@@ -26,6 +46,12 @@ function initWebSocket() {
       }
       if (ws) {
         console.log('WebSocket state at error time:', ws.readyState);
+        
+        // If we get an error during connection, clean up
+        if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.CLOSING) {
+          console.log('WebSocket errored during connection/closing, stopping audio');
+          stopAudio(false);
+        }
       }
     });
     
@@ -156,7 +182,8 @@ function handleWebSocketOpen(event) {
     const requiredConsecutiveFrames = 3; // Require multiple frames above threshold before triggering
     
     scriptProcessor.onaudioprocess = (event) => {
-      if (!ws) {
+      // Only process audio if WebSocket is open and ready
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         return;
       }
 
@@ -205,6 +232,12 @@ function handleWebSocketOpen(event) {
           window.firstFrameSentComplete = true;
         }
         
+        // Check if socket is still open before encoding and sending
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.warn('WebSocket no longer open, skipping audio frame');
+          return;
+        }
+
         // Create the protobuf message with explicit creation
         const protoFrame = Frame.create(frame);
         
@@ -220,8 +253,24 @@ function handleWebSocketOpen(event) {
           window.firstFrameEncoded = true;
         }
         
-        // Convert to Uint8Array for sending
-        ws.send(encodedFrame);
+        // Ensure we have valid data to send (not empty)
+        if (encodedFrame.byteLength === 0) {
+          console.warn('Empty frame detected, not sending');
+          return;
+        }
+        
+        // Send with error handling
+        try {
+          // Convert to Uint8Array for sending
+          ws.send(encodedFrame);
+        } catch (wsError) {
+          console.error('Error sending audio frame:', wsError);
+          
+          // If connection is broken, attempt to stop audio cleanly
+          if (ws.readyState !== WebSocket.OPEN) {
+            stopAudio(false);
+          }
+        }
       } catch (error) {
         console.error('Error creating/sending audio frame:', error);
       }
