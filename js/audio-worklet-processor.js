@@ -1,3 +1,4 @@
+// AudioWorkletProcessor and AudioWorkletGlobalScope are only available inside worklets
 class AudioProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -49,4 +50,5 @@ class AudioProcessor extends AudioWorkletProcessor {
   }
 }
 
+// Register the processor in the worklet scope
 registerProcessor('audio-processor', AudioProcessor); 

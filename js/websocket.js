@@ -177,7 +177,10 @@ function handleWebSocketOpen(event) {
 
     try {
       // Load and register the audio worklet
-      await audioContext.audioWorklet.addModule('js/audio-worklet-processor.js');
+      await audioContext.audioWorklet.addModule('/js/audio-worklet-processor.js').catch(error => {
+        console.error('Failed to load audio worklet:', error);
+        throw error;
+      });
       
       // Create AudioWorkletNode
       const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor', {
@@ -251,14 +254,23 @@ function handleWebSocketOpen(event) {
         }
       };
 
+      // Handle errors from the audio worklet
+      audioWorkletNode.port.onmessageerror = (error) => {
+        console.error('Error from audio worklet:', error);
+      };
+
       // Connect the audio processing pipeline
       source.connect(audioWorkletNode);
       audioWorkletNode.connect(audioContext.destination);
 
     } catch (error) {
       console.error('Error setting up AudioWorklet:', error);
+      alert('Failed to initialize audio processing. Please try reloading the page.');
     }
-  }).catch((error) => console.error('Error accessing microphone:', error));
+  }).catch((error) => {
+    console.error('Error accessing microphone:', error);
+    alert('Failed to access microphone. Please ensure microphone permissions are granted and try again.');
+  });
 }
 
 // Send interruption signal to the server to stop AI response
