@@ -30,88 +30,103 @@ function initWebSocket() {
 function handleWebSocketMessage(event) {
   const arrayBuffer = event.data;
   if (isPlaying) {
+    // Log raw message data
+    console.log('Received raw data length:', arrayBuffer.byteLength);
+    
+    // Try to log the first bytes for debugging
     try {
-      // Log raw message for debugging
-      console.log('Received raw data length:', arrayBuffer.byteLength);
-      
-      // Create a new Uint8Array directly from the arrayBuffer
+      const bytes = new Uint8Array(arrayBuffer);
+      const firstBytes = Array.from(bytes.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+      console.log('First 20 bytes:', firstBytes);
+    } catch (e) {
+      console.error('Error logging bytes:', e);
+    }
+    
+    try {
+      // Try to decode using protobuf
       const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
+      console.log('Decoded frame successfully', parsedFrame);
       
-      // Check what type of frame was received using new structure
-      let frameType = null;
-      if (!parsedFrame.data) {
-        console.error('No data field in frame:', parsedFrame);
-        return;
-      }
+      // Check for different possible structures - the server might be using a different format
+      // First check for data field (our updated structure)
+      let frameData = parsedFrame.data;
       
-      frameType = parsedFrame.data.oneofKind || "unknown";
-      
-      // Only log non-audio frames
-      if (frameType !== "audio") {
-        console.log('Received frame type:', frameType);
-        // Log entire frame for debugging
-        console.log('Complete frame data:', parsedFrame);
-      }
-
-      // Handle transcription messages
-      if (frameType === "transcription") {
-        const transcriptionFrame = parsedFrame.data.transcription;
-        console.log('Transcription received:', transcriptionFrame);
-        
-        const userId = transcriptionFrame.user_id || 'ai';
-        
-        console.log(`Transcription details - text: "${transcriptionFrame.text}", user_id: "${userId}", timestamp: "${transcriptionFrame.timestamp}"`);
-        
-        // Check if this is from the AI assistant
-        const speaker = userId === 'ai' ? 'ai' : 'user';
-        console.log(`Adding message to transcript as speaker: ${speaker}`);
-        
-        // Only add to transcript if there's actual text
-        if (transcriptionFrame.text && transcriptionFrame.text.trim()) {
-          if (speaker === 'ai') {
-            // Always ensure the AI is in responding mode when we receive AI messages
-            isAIResponding = true;
-            
-            // For AI, queue up messages to be displayed progressively
-            queueAIMessage(transcriptionFrame.text, transcriptionFrame.timestamp);
-          } else {
-            // For user speech, immediately display the message
-            addMessageToTranscript(transcriptionFrame.text, speaker);
-            
-            // Update user speaking timestamp to recognize new AI responses
-            lastUserSpeakTimestamp = Date.now();
-            
-            // Reset AI message tracking for next AI response
-            resetAIMessageTracking();
-          }
+      // If not found, look for direct fields at the top level (original structure)
+      if (!frameData || !frameData.oneofKind) {
+        if (parsedFrame.audio) {
+          frameData = { oneofKind: 'audio', audio: parsedFrame.audio };
+        } else if (parsedFrame.text) {
+          frameData = { oneofKind: 'text', text: parsedFrame.text };
+        } else if (parsedFrame.transcription) {
+          frameData = { oneofKind: 'transcription', transcription: parsedFrame.transcription };
         }
       }
       
-      // Handle audio messages
-      if (frameType === "audio") {
-        const audioFrame = parsedFrame.data.audio;
-        console.log('Audio received, format:', typeof audioFrame.audio, 
-                    'length:', audioFrame.audio ? audioFrame.audio.length : 'unknown');
-        enqueueAudioFromProto(arrayBuffer);
-      }
-      
-      // Handle text messages directly
-      if (frameType === "text") {
-        const textFrame = parsedFrame.data.text;
-        console.log('Text received:', textFrame.text);
+      // Process frame based on type
+      if (frameData && frameData.oneofKind) {
+        console.log('Frame type:', frameData.oneofKind);
+        
+        // Handle transcription messages
+        if (frameData.oneofKind === 'transcription') {
+          const transcriptionFrame = frameData.transcription;
+          console.log('Transcription received:', transcriptionFrame);
+          
+          // Display detailed information about the transcription frame
+          const userId = transcriptionFrame.user_id || 'ai';
+          
+          console.log(`Transcription details - text: "${transcriptionFrame.text}", user_id: "${userId}"`);
+          
+          // Check if this is from the AI assistant
+          const speaker = userId === 'ai' ? 'ai' : 'user';
+          console.log(`Adding message to transcript as speaker: ${speaker}`);
+          
+          // Only add to transcript if there's actual text
+          if (transcriptionFrame.text && transcriptionFrame.text.trim()) {
+            if (speaker === 'ai') {
+              // Always ensure the AI is in responding mode when we receive AI messages
+              isAIResponding = true;
+              
+              // For AI, queue up messages to be displayed progressively
+              queueAIMessage(transcriptionFrame.text, transcriptionFrame.timestamp || new Date().toISOString());
+            } else {
+              // For user speech, immediately display the message
+              addMessageToTranscript(transcriptionFrame.text, speaker);
+              
+              // Update user speaking timestamp to recognize new AI responses
+              lastUserSpeakTimestamp = Date.now();
+              
+              // Reset AI message tracking for next AI response
+              resetAIMessageTracking();
+            }
+          }
+        }
+        
+        // Handle audio messages
+        if (frameData.oneofKind === 'audio') {
+          console.log('Audio received');
+          enqueueAudioFromProto(arrayBuffer);
+        }
+        
+        // Handle text messages directly
+        if (frameData.oneofKind === 'text') {
+          console.log('Text received:', frameData.text.text);
+        }
+      } else {
+        console.warn('Parsed frame has an unexpected structure', parsedFrame);
+        // Try to play audio directly if we think it might be audio data
+        if (arrayBuffer.byteLength > 100) {
+          console.log('Attempting to play data as audio even though parsing failed');
+          enqueueAudioFromProto(arrayBuffer);
+        }
       }
     } catch (error) {
       console.error('Error decoding frame:', error);
-      // Log the raw data length to help diagnose issues
-      console.log('Raw data length:', event.data.byteLength);
       
-      // Try to log the first few bytes for debugging purposes
-      try {
-        const bytes = new Uint8Array(event.data);
-        const firstBytes = Array.from(bytes.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        console.log('First 20 bytes:', firstBytes);
-      } catch (e) {
-        console.error('Error logging bytes:', e);
+      // Special handling for audio frames
+      // If decoding fails but we have enough data for audio, try playing it directly
+      if (arrayBuffer.byteLength > 100) {
+        console.log('Decoding failed but attempting direct audio extraction');
+        enqueueAudioFromProto(arrayBuffer);
       }
     }
   }
@@ -160,23 +175,40 @@ function handleWebSocketOpen(event) {
       // Process the audio to send to server
       const pcmS16Array = convertFloat32ToS16PCM(audioData);
       const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
-      // Convert to an array of numbers for protobuf
-      const audioBytes = Array.from(pcmByteArray);
       
       try {
-        // Create Frame matching frames.proto definition
-        const frame = Frame.create({
-          data: {
-            oneofKind: "audio",
+        // Try both frame structures to match what server expects
+        let frame;
+        
+        // First try with direct frame fields (no nested data field)
+        // This matches the structure in frames.proto exactly
+        try {
+          frame = Frame.create({
             audio: {
               id: 1,
               name: "microphone",
-              audio: audioBytes,
+              audio: pcmByteArray,
               sample_rate: SAMPLE_RATE,
               num_channels: NUM_CHANNELS
             }
-          }
-        });
+          });
+        } catch (e) {
+          console.warn('Error creating direct frame structure, trying nested', e);
+          
+          // Fallback to nested structure
+          frame = Frame.create({
+            data: {
+              oneofKind: 'audio',
+              audio: {
+                id: 1,
+                name: "microphone",
+                audio: pcmByteArray,
+                sample_rate: SAMPLE_RATE,
+                num_channels: NUM_CHANNELS
+              }
+            }
+          });
+        }
         
         // Encode and send the frame
         const encodedFrame = Frame.encode(frame).finish();
@@ -234,16 +266,33 @@ function sendInterruptionSignal() {
   console.log('Sending interruption signal to stop AI response');
   
   try {
-    // Create interruption frame matching frames.proto
-    const interruptFrame = Frame.create({
-      data: {
-        oneofKind: "start_interruption",
-        start_interruption: {
-          user_id: "user",
-          timestamp: new Date().toISOString()
+    // Try both structures to match what server expects
+    let interruptFrame;
+    
+    // First try with direct frame fields (no nested data field)
+    try {
+      interruptFrame = Frame.create({
+        text: {
+          id: 2,
+          name: "interruption",
+          text: "interrupt"
         }
-      }
-    });
+      });
+    } catch (e) {
+      console.warn('Error creating direct interrupt frame, trying nested', e);
+      
+      // Fallback to nested structure
+      interruptFrame = Frame.create({
+        data: {
+          oneofKind: 'text',
+          text: {
+            id: 2,
+            name: "interruption",
+            text: "interrupt"
+          }
+        }
+      });
+    }
     
     // Encode and send the interruption signal
     const encodedInterrupt = Frame.encode(interruptFrame).finish();
