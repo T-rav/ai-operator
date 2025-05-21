@@ -121,7 +121,6 @@ function enqueueAudioFromProto(arrayBuffer) {
         
         // Skip playing if we've been interrupted
         if (!isAIResponding) {
-          console.log('Skipping audio playback due to interruption');
           return false;
         }
         
