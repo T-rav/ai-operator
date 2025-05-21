@@ -1,6 +1,10 @@
 // WebSocket functions
 
+// Import needed functions from audio-processing.js if they're not already in global scope
+// This is handled automatically if you're using proper ES modules
+
 function initWebSocket() {
+  console.log("Initializing WebSocket connection to ws://localhost:8765");
   ws = new WebSocket('ws://localhost:8765');
   // This is so `event.data` is already an ArrayBuffer.
   ws.binaryType = 'arraybuffer';
@@ -8,39 +12,51 @@ function initWebSocket() {
   ws.addEventListener('open', handleWebSocketOpen);
   ws.addEventListener('message', handleWebSocketMessage);
   ws.addEventListener('close', (event) => {
-    console.log('WebSocket connection closed.', event.code, event.reason);
+    console.log('WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
     stopAudio(false);
   });
-  ws.addEventListener('error', (event) => console.error('WebSocket error:', event));
+  ws.addEventListener('error', (event) => {
+    console.error('WebSocket error:', event);
+    // Try reconnecting on error
+    setTimeout(() => {
+      if (isPlaying) {
+        console.log('Attempting to reconnect WebSocket...');
+        initWebSocket();
+      }
+    }, 3000);
+  });
 }
 
 function handleWebSocketMessage(event) {
   const arrayBuffer = event.data;
   if (isPlaying) {
     try {
+      // Log raw message for debugging
+      console.log('Received raw data length:', arrayBuffer.byteLength);
+      
+      // Create a new Uint8Array directly from the arrayBuffer
       const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
       
-      // Check what type of frame was received
+      // Check what type of frame was received using new structure
       let frameType = null;
-      if (parsedFrame.transcription) frameType = "transcription";
-      else if (parsedFrame.audio) frameType = "audio";
-      else if (parsedFrame.text) frameType = "text";
-      else if (parsedFrame.message) frameType = "message";
-      else frameType = "unknown";
+      if (!parsedFrame.data) {
+        console.error('No data field in frame:', parsedFrame);
+        return;
+      }
+      
+      frameType = parsedFrame.data.oneofKind || "unknown";
       
       // Only log non-audio frames
       if (frameType !== "audio") {
         console.log('Received frame type:', frameType);
         // Log entire frame for debugging
-        console.log('Complete frame data:', JSON.stringify(parsedFrame));
+        console.log('Complete frame data:', parsedFrame);
       }
 
       // Handle transcription messages
-      if (parsedFrame.transcription) {
-        console.log('Transcription received:', JSON.stringify(parsedFrame.transcription));
-        
-        // Display detailed information about the transcription frame
-        const transcriptionFrame = parsedFrame.transcription;
+      if (frameType === "transcription") {
+        const transcriptionFrame = parsedFrame.data.transcription;
+        console.log('Transcription received:', transcriptionFrame);
         
         const userId = transcriptionFrame.user_id || 'ai';
         
@@ -72,24 +88,37 @@ function handleWebSocketMessage(event) {
       }
       
       // Handle audio messages
-      if (parsedFrame.audio) {
+      if (frameType === "audio") {
+        const audioFrame = parsedFrame.data.audio;
+        console.log('Audio received, format:', typeof audioFrame.audio, 
+                    'length:', audioFrame.audio ? audioFrame.audio.length : 'unknown');
         enqueueAudioFromProto(arrayBuffer);
       }
       
       // Handle text messages directly
-      if (parsedFrame.text) {
-        console.log('Text received:', parsedFrame.text);
+      if (frameType === "text") {
+        const textFrame = parsedFrame.data.text;
+        console.log('Text received:', textFrame.text);
       }
     } catch (error) {
       console.error('Error decoding frame:', error);
       // Log the raw data length to help diagnose issues
       console.log('Raw data length:', event.data.byteLength);
+      
+      // Try to log the first few bytes for debugging purposes
+      try {
+        const bytes = new Uint8Array(event.data);
+        const firstBytes = Array.from(bytes.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log('First 20 bytes:', firstBytes);
+      } catch (e) {
+        console.error('Error logging bytes:', e);
+      }
     }
   }
 }
 
 function handleWebSocketOpen(event) {
-  console.log('WebSocket connection established.', event)
+  console.log('WebSocket connection established.', event);
 
   navigator.mediaDevices.getUserMedia({
     audio: {
@@ -101,8 +130,8 @@ function handleWebSocketOpen(event) {
     }
   }).then((stream) => {
     microphoneStream = stream;
-    // 512 is closest thing to 200ms.
-    scriptProcessor = audioContext.createScriptProcessor(512, 1, 1);
+    
+    // Create media stream source
     source = audioContext.createMediaStreamSource(stream);
     
     // Set up visualizer for input
@@ -112,7 +141,8 @@ function handleWebSocketOpen(event) {
     dataArray = new Uint8Array(analyser.frequencyBinCount);
     drawVisualizer();
 
-    // Connect input to script processor and destination
+    // Create ScriptProcessor for audio processing
+    scriptProcessor = audioContext.createScriptProcessor(512, 1, 1);
     source.connect(scriptProcessor);
     scriptProcessor.connect(audioContext.destination);
 
@@ -121,25 +151,40 @@ function handleWebSocketOpen(event) {
     const requiredConsecutiveFrames = 3; // Require multiple frames above threshold before triggering
     
     scriptProcessor.onaudioprocess = (event) => {
-      if (!ws) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         return;
       }
 
       const audioData = event.inputBuffer.getChannelData(0);
+      
+      // Process the audio to send to server
       const pcmS16Array = convertFloat32ToS16PCM(audioData);
       const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
-      const frame = Frame.create({
-        audio: {
-          id: 0,
-          name: "InputAudioRawFrame",
-          audio: pcmByteArray,
-          sampleRate: SAMPLE_RATE,
-          numChannels: NUM_CHANNELS
-        }
-      });
-      const encodedFrame = new Uint8Array(Frame.encode(frame).finish());
-      ws.send(encodedFrame);
-
+      // Convert to an array of numbers for protobuf
+      const audioBytes = Array.from(pcmByteArray);
+      
+      try {
+        // Create Frame matching frames.proto definition
+        const frame = Frame.create({
+          data: {
+            oneofKind: "audio",
+            audio: {
+              id: 1,
+              name: "microphone",
+              audio: audioBytes,
+              sample_rate: SAMPLE_RATE,
+              num_channels: NUM_CHANNELS
+            }
+          }
+        });
+        
+        // Encode and send the frame
+        const encodedFrame = Frame.encode(frame).finish();
+        ws.send(encodedFrame);
+      } catch (error) {
+        console.error('Error encoding audio frame:', error);
+      }
+      
       // Check for speech with improved detection
       const rms = calculateRMS(audioData);
       const speechThreshold = 0.03; // Increased threshold to reduce false positives
@@ -189,16 +234,19 @@ function sendInterruptionSignal() {
   console.log('Sending interruption signal to stop AI response');
   
   try {
-    // Create interruption frame
+    // Create interruption frame matching frames.proto
     const interruptFrame = Frame.create({
-      start_interruption: {
-        user_id: 'user',
-        timestamp: Date.now().toString()
+      data: {
+        oneofKind: "start_interruption",
+        start_interruption: {
+          user_id: "user",
+          timestamp: new Date().toISOString()
+        }
       }
     });
     
     // Encode and send the interruption signal
-    const encodedInterrupt = new Uint8Array(Frame.encode(interruptFrame).finish());
+    const encodedInterrupt = Frame.encode(interruptFrame).finish();
     ws.send(encodedInterrupt);
     
     // Stop any current audio playback
