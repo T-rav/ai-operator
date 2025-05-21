@@ -329,28 +329,15 @@ function stopAIAudio() {
 }
 
 function stopAudio(closeWebsocket) {
-  playTime = 0;
+  // First stop any playing audio and reset flags
+  stopAllAIAudio();
   isPlaying = false;
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
+  
+  // Update UI
+  if (startBtn) startBtn.disabled = false;
+  if (stopBtn) stopBtn.disabled = true;
 
-  if (ws && closeWebsocket) {
-    ws.close();
-    ws = null;
-  }
-
-  if (source) {
-    source.disconnect();
-    source = null;
-  }
-  if (analyser) {
-    analyser.disconnect();
-    analyser = null;
-  }
-  if (animationFrame) {
-    cancelAnimationFrame(animationFrame);
-    animationFrame = null;
-  }
+  // Clear timeouts
   if (silenceTimeout) {
     clearTimeout(silenceTimeout);
     silenceTimeout = null;
@@ -359,24 +346,49 @@ function stopAudio(closeWebsocket) {
     clearTimeout(aiDisplayTimer);
     aiDisplayTimer = null;
   }
-  
-  // Stop any playing audio
-  stopAllAIAudio();
-  
+
+  // Stop animation
+  if (animationFrame) {
+    cancelAnimationFrame(animationFrame);
+    animationFrame = null;
+  }
+
+  // Disconnect audio nodes
+  if (source) {
+    source.disconnect();
+    source = null;
+  }
+  if (analyser) {
+    analyser.disconnect();
+    analyser = null;
+  }
+
   // Reset AI response tracking
   resetAIMessageTracking();
   isAIResponding = false;
 
-  // Close the audio context
+  // Close WebSocket if requested
+  if (ws && closeWebsocket) {
+    ws.close();
+    ws = null;
+  }
+
+  // Close audio context
   if (audioContext) {
     audioContext.close().then(() => {
       audioContext = null;
+      console.log('Audio context closed successfully');
+    }).catch(error => {
+      console.error('Error closing audio context:', error);
     });
   }
 
-  // Stop the microphone stream
+  // Stop microphone stream
   if (microphoneStream) {
     microphoneStream.getTracks().forEach(track => track.stop());
     microphoneStream = null;
   }
+
+  // Reset playback time
+  playTime = 0;
 } 

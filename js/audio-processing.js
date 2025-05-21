@@ -135,18 +135,22 @@ function enqueueAudioFromProto(arrayBuffer) {
 function stopAllAIAudio() {
   // Stop all currently playing audio sources
   for (let source of activeAudioSources) {
-      try {
-          source.stop();
-      } catch (e) {
-          // Ignore errors from sources that might have already stopped
-      }
+    try {
+      source.stop();
+    } catch (e) {
+      // Ignore errors from sources that might have already stopped
+    }
   }
   
   // Clear the array
   activeAudioSources = [];
   
   // Reset play time to prevent scheduled audio from playing
-  playTime = audioContext.currentTime;
+  if (audioContext) {
+    playTime = audioContext.currentTime;
+  } else {
+    playTime = 0;
+  }
 }
 
 function startAudioBtnHandler() {
