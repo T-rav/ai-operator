@@ -30,7 +30,7 @@ class ServiceManager:
             params=WebsocketServerParams(
                 serializer=self.serializer,
                 audio_out_enabled=True,
-                add_wav_header=True,
+                add_wav_header=False,
                 vad_enabled=True,
                 vad_analyzer=SileroVADAnalyzer(),
                 vad_audio_passthrough=True,
@@ -58,7 +58,9 @@ class ServiceManager:
         """Create and configure the Text-to-Speech service."""
         self.tts = CartesiaTTSService(
             api_key=config.CARTESIA_API_KEY,
-            voice_id=config.TTS_VOICE_ID
+            voice_id=config.TTS_VOICE_ID,
+            output_format="pcm",
+            sample_rate=config.AUDIO_SAMPLE_RATE
         )
         return self.tts
     

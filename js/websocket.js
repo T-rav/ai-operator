@@ -133,7 +133,11 @@ function handleWebSocketMessage(event) {
       
       // Handle audio messages
       if (parsedFrame.audio) {
-        enqueueAudioFromProto(arrayBuffer);
+        console.log(`Received audio frame, passing to player. Length: ${parsedFrame.audio.audio ? parsedFrame.audio.audio.length : 0} bytes`);
+        const audioPlayed = enqueueAudioFromProto(arrayBuffer);
+        if (!audioPlayed) {
+          console.warn('Failed to play audio from frame');
+        }
       }
       
       // Handle text messages directly

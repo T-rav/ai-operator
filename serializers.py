@@ -9,9 +9,31 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
         logger.info("CustomProtobufSerializer initialized")
 
     async def serialize(self, frame):
-        # Only log TextFrames, not audio frames
-        if not (hasattr(frame, '__class__') and frame.__class__.__name__ == 'OutputAudioRawFrame'):
-            logger.debug(f"Serializing frame type: {type(frame).__name__}")
+        # Add more detailed logging for audio frames
+        if hasattr(frame, '__class__') and frame.__class__.__name__ == 'OutputAudioRawFrame':
+            try:
+                # Log audio frame details without dumping the entire frame
+                audio_length = len(frame.audio) if hasattr(frame, 'audio') else 0
+                sample_rate = frame.sample_rate if hasattr(frame, 'sample_rate') else 'unknown'
+                logger.debug(f"Serializing audio frame: length={audio_length}, sample_rate={sample_rate}")
+                
+                # Check if audio is empty
+                if audio_length == 0:
+                    logger.warning("Empty audio frame detected, this won't play in the browser")
+                    
+                # Make sure the type name field is set correctly for client
+                if hasattr(frame, 'name') and frame.name != 'AudioRawFrame':
+                    logger.debug(f"Changing audio frame name from '{frame.name}' to 'AudioRawFrame'")
+                    frame.name = 'AudioRawFrame'
+                    
+                # Ensure pts field is set
+                if not hasattr(frame, 'pts') or frame.pts is None:
+                    logger.debug("Setting missing pts field on audio frame")
+                    frame.pts = 0
+            except Exception as e:
+                logger.error(f"Error processing audio frame: {e}")
+        elif hasattr(frame, '__class__'):
+            logger.debug(f"Serializing frame type: {frame.__class__.__name__}")
         
         # Special handling for TranscriptionFrame 
         if isinstance(frame, TranscriptionFrame):
@@ -23,7 +45,15 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
                 logger.error(f"Error processing TranscriptionFrame: {e}")
             
         # Use the normal serialization for all frames
-        return await super().serialize(frame)
+        serialized = await super().serialize(frame)
+        
+        # Log serialization results for debugging
+        if serialized:
+            logger.debug(f"Serialized frame size: {len(serialized)} bytes")
+            if len(serialized) == 0:
+                logger.warning("Serialization produced empty data - this won't work!")
+                
+        return serialized
         
     async def deserialize(self, data):
         try:
