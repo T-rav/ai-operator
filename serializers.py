@@ -70,12 +70,32 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
                         
                         # Create a test frame and try to partially parse
                         logger.debug("Attempting manual protobuf parsing...")
+                        
+                        # Log expected protobuf structure details
+                        logger.debug(f"Expected Frame fields: {Frame.DESCRIPTOR.fields_by_name.keys()}")
+                        if 'audio' in Frame.DESCRIPTOR.fields_by_name:
+                            audio_field = Frame.DESCRIPTOR.fields_by_name['audio']
+                            logger.debug(f"Audio field type: {audio_field.type}, message_type: {audio_field.message_type.name if audio_field.message_type else 'None'}")
+                            if audio_field.message_type:
+                                logger.debug(f"AudioFrame expected fields: {audio_field.message_type.fields_by_name.keys()}")
+                        
+                        # Check for oneof fields
+                        if Frame.DESCRIPTOR.oneofs:
+                            logger.debug(f"Frame has oneofs: {[o.name for o in Frame.DESCRIPTOR.oneofs]}")
+                            for oneof in Frame.DESCRIPTOR.oneofs:
+                                logger.debug(f"Oneof '{oneof.name}' fields: {[f.name for f in oneof.fields]}")
+                        
+                        # Try to parse the whole message
                         test_frame = Frame()
                         try:
                             test_frame.ParseFromString(data)
                             logger.debug(f"Partial parse successful: {json_format.MessageToJson(test_frame)}")
                         except DecodeError as parse_err:
                             logger.debug(f"Manual parsing failed: {parse_err}")
+                            
+                            # Log specific error location info if available
+                            if "invalid wire type" in str(parse_err):
+                                logger.debug("Common issue: invalid wire type suggests field type mismatch")
                     except ImportError as imp_err:
                         logger.debug(f"Could not import protobuf modules for manual parsing: {imp_err}")
                     except Exception as parse_err:

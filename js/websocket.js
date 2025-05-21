@@ -176,14 +176,21 @@ function handleWebSocketOpen(event) {
           window.firstFrameSent = true;
         }
         
-        // Create a simplified version of the frame
+        // Create frame matching server's expected format
         const frame = {
-          audio: {
-            id: 0,
-            name: "InputAudioRawFrame",
-            audio: pcmByteArray,
-            sampleRate: SAMPLE_RATE,
-            numChannels: NUM_CHANNELS
+          // Must match server's oneof field name 'frame'
+          frame: {
+            // Use 'audio' as the field choice in the oneof
+            oneofKind: "audio", 
+            audio: {
+              id: 0,
+              // CRITICAL: Match the exact type name expected by server
+              name: "AudioRawFrame",
+              audio: pcmByteArray,
+              sample_rate: SAMPLE_RATE, // Use snake_case
+              num_channels: NUM_CHANNELS, // Use snake_case
+              pts: 0 // Add missing pts field
+            }
           }
         };
         
