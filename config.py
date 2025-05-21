@@ -11,9 +11,11 @@ logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
 
 # System message for LLM
+ASSISTANT_NAME = "Jeeves"
+ASSISTANT_DESCRIPTION = f"Hi, I am a helpful assistant named {ASSISTANT_NAME}. Ask me anything!"
 SYSTEM_MESSAGE = {
     "role": "system",
-    "content": "You are a helpful LLM in a WebRTC call. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way.",
+    "content": f"You are a helpful assistant named {ASSISTANT_NAME}. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way.",
 }
 
 # Audio configuration

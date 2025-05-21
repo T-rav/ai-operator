@@ -44,8 +44,11 @@ class EventHandlerManager:
                 logger.debug(f"Transport serializer: {type(transport.serializer).__name__}")
             
             # Kick off the conversation.
-            logger.debug("Adding initial system message")
-            self.messages.append({"role": "system", "content": "Please introduce yourself to the user."})
+            logger.debug("Adding initial system message with ASSISTANT_DESCRIPTION")
+            
+            # Import config to access ASSISTANT_DESCRIPTION
+            import config
+            self.messages.append({"role": "system", "content": f"{config.ASSISTANT_DESCRIPTION}"})
             
             logger.debug("Queueing context frame to start conversation")
             await self.task.queue_frames([self.context_aggregator.user().get_context_frame()])
