@@ -12,13 +12,32 @@ function calculateRMS(audioData) {
 }
 
 function convertFloat32ToS16PCM(float32Array) {
-  let int16Array = new Int16Array(float32Array.length);
+  try {
+    console.log('Converting Float32 to S16PCM, input length:', float32Array.length);
+    
+    let int16Array = new Int16Array(float32Array.length);
 
-  for (let i = 0; i < float32Array.length; i++) {
-      let clampedValue = Math.max(-1, Math.min(1, float32Array[i]));
-      int16Array[i] = clampedValue < 0 ? clampedValue * 32768 : clampedValue * 32767;
+    for (let i = 0; i < float32Array.length; i++) {
+        let clampedValue = Math.max(-1, Math.min(1, float32Array[i]));
+        int16Array[i] = clampedValue < 0 ? clampedValue * 32768 : clampedValue * 32767;
+    }
+    
+    // Log endianness info for debugging
+    if (window.endianCheckDone === undefined) {
+      const isLittleEndian = (() => {
+        const buffer = new ArrayBuffer(2);
+        new DataView(buffer).setInt16(0, 256, true);
+        return new Int16Array(buffer)[0] === 256;
+      })();
+      console.log('System endianness:', isLittleEndian ? 'little-endian' : 'big-endian');
+      window.endianCheckDone = true;
+    }
+    
+    return int16Array;
+  } catch (error) {
+    console.error('Error converting audio format:', error);
+    throw error;
   }
-  return int16Array;
 }
 
 function enqueueAudioFromProto(arrayBuffer) {

@@ -8,7 +8,7 @@ load_dotenv(override=True)
 
 # Configure logger
 logger.remove(0)
-logger.add(sys.stderr, level="INFO")
+logger.add(sys.stderr, level="DEBUG")
 
 # System message for LLM
 SYSTEM_MESSAGE = {

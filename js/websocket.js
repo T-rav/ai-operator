@@ -1,23 +1,57 @@
 // WebSocket functions
 
 function initWebSocket() {
-  ws = new WebSocket('ws://localhost:8765');
-  // This is so `event.data` is already an ArrayBuffer.
-  ws.binaryType = 'arraybuffer';
+  try {
+    console.log('Initializing WebSocket connection to ws://localhost:8765');
+    ws = new WebSocket('ws://localhost:8765');
+    // This is so `event.data` is already an ArrayBuffer.
+    ws.binaryType = 'arraybuffer';
 
-  ws.addEventListener('open', handleWebSocketOpen);
-  ws.addEventListener('message', handleWebSocketMessage);
-  ws.addEventListener('close', (event) => {
-    console.log('WebSocket connection closed.', event.code, event.reason);
-    stopAudio(false);
-  });
-  ws.addEventListener('error', (event) => console.error('WebSocket error:', event));
+    ws.addEventListener('open', handleWebSocketOpen);
+    ws.addEventListener('message', handleWebSocketMessage);
+    ws.addEventListener('close', (event) => {
+      console.log('WebSocket connection closed.', event.code, event.reason);
+      console.log('WebSocket close event details:', {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean
+      });
+      stopAudio(false);
+    });
+    ws.addEventListener('error', (event) => {
+      console.error('WebSocket error occurred:', event);
+      // Try to get additional info about the error
+      if (event.error) {
+        console.error('Error details:', event.error);
+      }
+      if (ws) {
+        console.log('WebSocket state at error time:', ws.readyState);
+      }
+    });
+    
+    // Log WebSocket state after initialization
+    console.log('WebSocket created, readyState:', ws.readyState, '(0 = CONNECTING)');
+  } catch (error) {
+    console.error('Error initializing WebSocket:', error);
+  }
 }
 
 function handleWebSocketMessage(event) {
   const arrayBuffer = event.data;
   if (isPlaying) {
     try {
+      // Log received raw data for debugging
+      if (!window.receivedFirstMessage) {
+        console.log('First WebSocket message received:');
+        console.log('- Data type:', arrayBuffer.constructor.name);
+        console.log('- Data length:', arrayBuffer.byteLength, 'bytes');
+        if (arrayBuffer.byteLength > 0) {
+          const dataView = new Uint8Array(arrayBuffer);
+          console.log('- First 16 bytes:', Array.from(dataView.slice(0, 16)));
+        }
+        window.receivedFirstMessage = true;
+      }
+      
       const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
       
       // Check what type of frame was received
@@ -89,7 +123,8 @@ function handleWebSocketMessage(event) {
 }
 
 function handleWebSocketOpen(event) {
-  console.log('WebSocket connection established.', event)
+  console.log('WebSocket connection established.', event);
+  console.log('WebSocket readyState:', ws.readyState, '(1 = OPEN)');
 
   navigator.mediaDevices.getUserMedia({
     audio: {
@@ -128,17 +163,61 @@ function handleWebSocketOpen(event) {
       const audioData = event.inputBuffer.getChannelData(0);
       const pcmS16Array = convertFloat32ToS16PCM(audioData);
       const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
-      const frame = Frame.create({
-        audio: {
-          id: 0,
-          name: "InputAudioRawFrame",
-          audio: pcmByteArray,
-          sampleRate: SAMPLE_RATE,
-          numChannels: NUM_CHANNELS
+      
+      try {
+        // Log first frame data details for debugging
+        if (!window.firstFrameSent) {
+          console.log('Creating first audio frame:');
+          console.log('- PCM array type:', pcmS16Array.constructor.name);
+          console.log('- PCM byte array type:', pcmByteArray.constructor.name);
+          console.log('- Byte array length:', pcmByteArray.length);
+          console.log('- Sample rate:', SAMPLE_RATE);
+          console.log('- Num channels:', NUM_CHANNELS);
+          window.firstFrameSent = true;
         }
-      });
-      const encodedFrame = new Uint8Array(Frame.encode(frame).finish());
-      ws.send(encodedFrame);
+        
+        // Create a simplified version of the frame
+        const frame = {
+          audio: {
+            id: 0,
+            name: "InputAudioRawFrame",
+            audio: pcmByteArray,
+            sampleRate: SAMPLE_RATE,
+            numChannels: NUM_CHANNELS
+          }
+        };
+        
+        // Log frame structure info for first frame
+        if (window.firstFrameSentComplete === undefined) {
+          console.log('First frame structure:', JSON.stringify(frame, (key, value) => {
+            if (key === 'audio' && value && value.audio) {
+              return `[Uint8Array: ${value.audio.length} bytes]`;
+            }
+            return value;
+          }));
+          window.firstFrameSentComplete = true;
+        }
+        
+        // Create the protobuf message with explicit creation
+        const protoFrame = Frame.create(frame);
+        
+        // Encode with explicit finish() to ensure proper formatting
+        const encodedFrame = Frame.encode(protoFrame).finish();
+        
+        // Log encoded frame for first frame
+        if (window.firstFrameEncoded === undefined) {
+          console.log('First encoded frame:');
+          console.log('- Type:', encodedFrame.constructor.name);
+          console.log('- Length:', encodedFrame.byteLength, 'bytes');
+          console.log('- First 16 bytes:', Array.from(encodedFrame.slice(0, 16)));
+          window.firstFrameEncoded = true;
+        }
+        
+        // Convert to Uint8Array for sending
+        ws.send(encodedFrame);
+      } catch (error) {
+        console.error('Error creating/sending audio frame:', error);
+      }
 
       // Check for speech with improved detection
       const rms = calculateRMS(audioData);
@@ -189,16 +268,19 @@ function sendInterruptionSignal() {
   console.log('Sending interruption signal to stop AI response');
   
   try {
-    // Create interruption frame
-    const interruptFrame = Frame.create({
+    // Create interruption frame with simpler object structure
+    const interruptData = {
       start_interruption: {
         user_id: 'user',
         timestamp: Date.now().toString()
       }
-    });
+    };
     
-    // Encode and send the interruption signal
-    const encodedInterrupt = new Uint8Array(Frame.encode(interruptFrame).finish());
+    // Create the protobuf message with explicit creation
+    const interruptFrame = Frame.create(interruptData);
+    
+    // Encode with explicit finish() to ensure proper formatting
+    const encodedInterrupt = Frame.encode(interruptFrame).finish();
     ws.send(encodedInterrupt);
     
     // Stop any current audio playback

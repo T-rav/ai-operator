@@ -34,9 +34,22 @@ class EventHandlerManager:
             # Make the client accessible to our processor
             self.text_processor.client = client  # Store the client connection
             logger.info(f"Client connected and stored in TextTranscriptionProcessor: {client.remote_address}")
+            
+            # Log transport and client details for debugging
+            logger.debug(f"Transport details: id={id(transport)}, type={type(transport).__name__}")
+            logger.debug(f"Client details: id={id(client)}, type={type(client).__name__}")
+            
+            # Log serializer info
+            if hasattr(transport, 'serializer'):
+                logger.debug(f"Transport serializer: {type(transport.serializer).__name__}")
+            
             # Kick off the conversation.
+            logger.debug("Adding initial system message")
             self.messages.append({"role": "system", "content": "Please introduce yourself to the user."})
+            
+            logger.debug("Queueing context frame to start conversation")
             await self.task.queue_frames([self.context_aggregator.user().get_context_frame()])
+            logger.debug("on_client_connected handler completed")
 
         @self.transport.event_handler("on_session_timeout")
         async def on_session_timeout(transport, client):

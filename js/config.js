@@ -72,9 +72,28 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load the protobuf definition
     protobuf.load('frames.proto', (err, root) => {
         if (err) {
+            console.error('Error loading protobuf definition:', err);
             throw err;
         }
+        
+        console.log('Successfully loaded protobuf definition');
         Frame = root.lookupType('pipecat.Frame');
+        console.log('Loaded Frame type from protobuf definition');
+        
+        try {
+            // Log details about the Frame type
+            console.log('Frame type info:');
+            console.log('- Frame field names:', Frame.fieldsArray.map(f => f.name));
+            console.log('- Frame oneof fields:', Object.keys(Frame.oneofs || {}));
+            
+            // Check for oneof fields and log their structure
+            if (Frame.oneofs && Frame.oneofs.data) {
+                console.log('- Oneof field "data" members:', Frame.oneofs.data.fieldsArray.map(f => f.name));
+            }
+        } catch (e) {
+            console.error('Error inspecting Frame type:', e);
+        }
+        
         const progressText = document.getElementById('progressText');
         if (progressText) {
             progressText.textContent = 'We are ready! Make sure to run the server and then click `Start Audio`.';
