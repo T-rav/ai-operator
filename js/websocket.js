@@ -77,77 +77,62 @@ function handleWebSocketMessage(event) {
         }
         window.receivedFirstMessage = true;
       }
-      
+
+      // Decode the protobuf message
       const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
       
-      // Check what type of frame was received
-      let frameType = null;
-      if (parsedFrame.transcription) frameType = "transcription";
-      else if (parsedFrame.audio) frameType = "audio";
-      else if (parsedFrame.text) frameType = "text";
-      else if (parsedFrame.message) frameType = "message";
-      else frameType = "unknown";
-      
-      // Only log non-audio frames
-      if (frameType !== "audio") {
-        console.log('Received frame type:', frameType);
-        // Log entire frame for debugging
-        console.log('Complete frame data:', JSON.stringify(parsedFrame));
-      }
-
       // Handle transcription messages
       if (parsedFrame.transcription) {
-        console.log('Transcription received:', JSON.stringify(parsedFrame.transcription));
-        
-        // Display detailed information about the transcription frame
-        const transcriptionFrame = parsedFrame.transcription;
-        
-        const userId = transcriptionFrame.user_id || 'ai';
-        
-        console.log(`Transcription details - text: "${transcriptionFrame.text}", user_id: "${userId}", timestamp: "${transcriptionFrame.timestamp}"`);
-        
-        // Check if this is from the AI assistant
+        const transcription = parsedFrame.transcription;
+        const userId = transcription.user_id || 'ai';
         const speaker = userId === 'ai' ? 'ai' : 'user';
-        console.log(`Adding message to transcript as speaker: ${speaker}`);
         
-        // Only add to transcript if there's actual text
-        if (transcriptionFrame.text && transcriptionFrame.text.trim()) {
+        if (transcription.text && transcription.text.trim()) {
           if (speaker === 'ai') {
-            // Always ensure the AI is in responding mode when we receive AI messages
             isAIResponding = true;
-            
-            // For AI, queue up messages to be displayed progressively
-            queueAIMessage(transcriptionFrame.text, transcriptionFrame.timestamp);
+            queueAIMessage(transcription.text, transcription.timestamp);
           } else {
-            // For user speech, immediately display the message
-            addMessageToTranscript(transcriptionFrame.text, speaker);
-            
-            // Update user speaking timestamp to recognize new AI responses
+            addMessageToTranscript(transcription.text, speaker);
             lastUserSpeakTimestamp = Date.now();
-            
-            // Reset AI message tracking for next AI response
             resetAIMessageTracking();
           }
         }
       }
       
       // Handle audio messages
-      if (parsedFrame.audio) {
-        console.log(`Received audio frame, passing to player. Length: ${parsedFrame.audio.audio ? parsedFrame.audio.audio.length : 0} bytes`);
+      else if (parsedFrame.audio) {
         const audioPlayed = enqueueAudioFromProto(arrayBuffer);
         if (!audioPlayed) {
           console.warn('Failed to play audio from frame');
         }
       }
       
-      // Handle text messages directly
-      if (parsedFrame.text) {
-        console.log('Text received:', parsedFrame.text);
+      // Handle text messages
+      else if (parsedFrame.text) {
+        const text = parsedFrame.text;
+        const userId = text.user_id || 'ai';
+        const speaker = userId === 'ai' ? 'ai' : 'user';
+        
+        if (text.text && text.text.trim()) {
+          if (speaker === 'ai') {
+            isAIResponding = true;
+            queueAIMessage(text.text, text.timestamp);
+          } else {
+            addMessageToTranscript(text.text, speaker);
+            lastUserSpeakTimestamp = Date.now();
+            resetAIMessageTracking();
+          }
+        }
       }
     } catch (error) {
       console.error('Error decoding frame:', error);
-      // Log the raw data length to help diagnose issues
-      console.log('Raw data length:', event.data.byteLength);
+      console.log('Raw data length:', arrayBuffer.byteLength);
+      // Log the full message for debugging
+      console.log('Full message bytes:', Array.from(new Uint8Array(arrayBuffer)));
+      
+      // Try to decode the string content directly for debugging
+      const textDecoder = new TextDecoder();
+      console.log('Raw message content:', textDecoder.decode(arrayBuffer));
     }
   }
 }
