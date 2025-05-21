@@ -30,14 +30,23 @@ class PipelineManager:
             self.services['serializer']
         )
     
+    def setup_user_transcription_processor(self):
+        """Create and return the user transcription processor."""
+        return UserTranscriptionProcessor(
+            self.services['transport'], 
+            self.services['serializer']
+        )
+
     def create_pipeline(self):
         """Create the main pipeline with all components."""
         text_processor = self.setup_text_processor()
+        user_transcription_processor = self.setup_user_transcription_processor()
         
         self.pipeline = Pipeline(
             [
                 self.services['transport'].input(),  # Websocket input from client
                 self.services['stt'],  # Speech-To-Text
+                user_transcription_processor,        # New: Emit user transcription
                 self.services['context_aggregator'].user(),
                 self.services['llm'],  # LLM
                 text_processor,  # Our custom processor to handle LLM text

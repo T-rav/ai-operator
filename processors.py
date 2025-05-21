@@ -3,6 +3,70 @@ from loguru import logger
 from pipecat.frames.frames import LLMTextFrame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+class UserTranscriptionProcessor(FrameProcessor):
+    def __init__(self, transport, serializer):
+        super().__init__()
+        self.transport = transport
+        self.serializer = serializer
+        self.client = None
+        self.accumulated_text = ""
+        self.last_send_time = datetime.datetime.now()
+        self.send_interval = 0.8
+        self.min_batch_size = 15
+        logger.info("UserTranscriptionProcessor initialized")
+    
+    async def process_frame(self, frame, direction=None):
+        await super().process_frame(frame, direction)
+
+        # User STT output is typically a TextFrame with user_id="user"
+        # (You may need to adjust this logic if your pipeline emits a different frame for user STT)
+        if hasattr(frame, "user_id") and getattr(frame, "user_id", None) == "user" and hasattr(frame, "text"):
+            text = frame.text
+            logger.debug(f"UserTranscriptionProcessor: Processing user TextFrame: {text}")
+
+            self.accumulated_text += text
+
+            now = datetime.datetime.now()
+            time_since_last_send = (now - self.last_send_time).total_seconds()
+
+            should_send = (
+                (time_since_last_send >= self.send_interval and len(self.accumulated_text.strip()) >= self.min_batch_size) or
+                any(self.accumulated_text.endswith(p) for p in ['.', '!', '?']) or
+                len(self.accumulated_text) > 100
+            )
+
+            if should_send and self.accumulated_text.strip():
+                transcription_frame = TranscriptionFrame(
+                    text=self.accumulated_text,
+                    user_id="user",
+                    timestamp=now.isoformat(),
+                )
+
+                try:
+                    serialized_frame = await self.serializer.serialize(transcription_frame)
+                    if self.client is not None:
+                        logger.debug(f"Sending batched user transcription: {self.accumulated_text}")
+                        await self.client.send(serialized_frame)
+                    elif hasattr(self.transport, 'broadcast'):
+                        logger.debug(f"Broadcasting user transcription: {self.accumulated_text}")
+                        await self.transport.broadcast(serialized_frame)
+                    elif hasattr(self.transport, '_client') and self.transport._client:
+                        logger.debug(f"Sending via transport._client: {self.accumulated_text}")
+                        await self.transport._client.send(serialized_frame)
+                    else:
+                        logger.warning(f"No method to send user transcription frame, using pipeline: {self.accumulated_text}")
+                        if hasattr(self.transport, 'output'):
+                            await self.transport.output().push_frame(transcription_frame, FrameDirection.DOWNSTREAM)
+                        else:
+                            await self.push_frame(transcription_frame, direction)
+                    self.accumulated_text = ""
+                    self.last_send_time = now
+                except Exception as e:
+                    logger.error(f"Error sending user transcription frame: {e}")
+                    await self.push_frame(transcription_frame, direction)
+        else:
+            await self.push_frame(frame, direction) 
+
 
 class TextTranscriptionProcessor(FrameProcessor):
     def __init__(self, transport, serializer):
