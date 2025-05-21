@@ -78,61 +78,122 @@ function handleWebSocketMessage(event) {
         window.receivedFirstMessage = true;
       }
 
-      // Decode the protobuf message
-      const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
+      const bytes = new Uint8Array(arrayBuffer);
+      const firstByte = bytes[0];
+      const fieldNumber = firstByte >> 3;
+      const wireType = firstByte & 0x07;
       
-      // Handle transcription messages
-      if (parsedFrame.transcription) {
-        const transcription = parsedFrame.transcription;
-        const userId = transcription.user_id || 'ai';
-        const speaker = userId === 'ai' ? 'ai' : 'user';
-        
-        if (transcription.text && transcription.text.trim()) {
-          if (speaker === 'ai') {
-            isAIResponding = true;
-            queueAIMessage(transcription.text, transcription.timestamp);
-          } else {
-            addMessageToTranscript(transcription.text, speaker);
-            lastUserSpeakTimestamp = Date.now();
-            resetAIMessageTracking();
-          }
-        }
+      // All our messages use length-delimited encoding (wire type 2)
+      if (wireType !== 2) {
+        console.warn(`Unexpected wire type: ${wireType}, trying fallback parsing`);
       }
-      
-      // Handle audio messages
-      else if (parsedFrame.audio) {
+
+      // Handle audio frames directly without protobuf decoding
+      if (fieldNumber === 2) { // AudioFrame (field tag 18)
         const audioPlayed = enqueueAudioFromProto(arrayBuffer);
         if (!audioPlayed) {
           console.warn('Failed to play audio from frame');
         }
+        return;
       }
-      
-      // Handle text messages
-      else if (parsedFrame.text) {
-        const text = parsedFrame.text;
-        const userId = text.user_id || 'ai';
-        const speaker = userId === 'ai' ? 'ai' : 'user';
-        
-        if (text.text && text.text.trim()) {
-          if (speaker === 'ai') {
-            isAIResponding = true;
-            queueAIMessage(text.text, text.timestamp);
-          } else {
-            addMessageToTranscript(text.text, speaker);
-            lastUserSpeakTimestamp = Date.now();
-            resetAIMessageTracking();
+
+      // For text/transcription frames (field tag 26), try manual parsing first
+      if (fieldNumber === 3) {
+        try {
+          // Skip the header bytes and try to find the text content
+          const messageLength = bytes[1]; // Length byte after field tag
+          let offset = 2; // Start after field tag and length
+          
+          // Skip frame type and ID fields
+          while (offset < bytes.length && bytes[offset] !== 26) { // 26 is field tag for text content
+            offset++;
           }
+          
+          if (offset < bytes.length) {
+            offset++; // Skip text field tag
+            const textLength = bytes[offset];
+            offset++;
+            
+            // Extract the text content
+            const textContent = new TextDecoder().decode(
+              bytes.slice(offset, offset + textLength)
+            );
+            
+            // Look for user_id field (field tag 34)
+            let userId = 'ai';
+            let userIdOffset = offset + textLength;
+            while (userIdOffset < bytes.length && bytes[userIdOffset] !== 34) {
+              userIdOffset++;
+            }
+            
+            if (userIdOffset < bytes.length - 2) {
+              userIdOffset++; // Skip field tag
+              const userIdLength = bytes[userIdOffset];
+              userIdOffset++;
+              userId = new TextDecoder().decode(
+                bytes.slice(userIdOffset, userIdOffset + userIdLength)
+              );
+            }
+            
+            const speaker = userId === 'ai' ? 'ai' : 'user';
+            if (speaker === 'ai') {
+              isAIResponding = true;
+              queueAIMessage(textContent, new Date().toISOString());
+            } else {
+              addMessageToTranscript(textContent, speaker);
+              lastUserSpeakTimestamp = Date.now();
+              resetAIMessageTracking();
+            }
+            return;
+          }
+        } catch (manualError) {
+          console.warn('Manual parsing failed:', manualError);
         }
       }
+
+      // Fallback to protobuf decoding if manual parsing fails
+      try {
+        const frame = Frame.decode(bytes);
+        
+        if (frame.transcription) {
+          const transcription = frame.transcription;
+          const userId = transcription.user_id || 'ai';
+          const speaker = userId === 'ai' ? 'ai' : 'user';
+          
+          if (transcription.text && transcription.text.trim()) {
+            if (speaker === 'ai') {
+              isAIResponding = true;
+              queueAIMessage(transcription.text, transcription.timestamp);
+            } else {
+              addMessageToTranscript(transcription.text, speaker);
+              lastUserSpeakTimestamp = Date.now();
+              resetAIMessageTracking();
+            }
+          }
+        } else if (frame.text) {
+          const text = frame.text;
+          const userId = text.user_id || 'ai';
+          const speaker = userId === 'ai' ? 'ai' : 'user';
+          
+          if (text.text && text.text.trim()) {
+            if (speaker === 'ai') {
+              isAIResponding = true;
+              queueAIMessage(text.text, text.timestamp);
+            } else {
+              addMessageToTranscript(text.text, speaker);
+              lastUserSpeakTimestamp = Date.now();
+              resetAIMessageTracking();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Both manual parsing and protobuf decode failed:', error);
+        // Log raw message for debugging
+        console.log('Raw message bytes:', Array.from(bytes));
+        console.log('Raw message content:', new TextDecoder().decode(arrayBuffer));
+      }
     } catch (error) {
-      console.error('Error decoding frame:', error);
-      console.log('Raw data length:', arrayBuffer.byteLength);
-      // Log the full message for debugging
-      console.log('Full message bytes:', Array.from(new Uint8Array(arrayBuffer)));
-      
-      // Try to decode the string content directly for debugging
-      const textDecoder = new TextDecoder();
-      console.log('Raw message content:', textDecoder.decode(arrayBuffer));
+      console.error('Error handling message:', error);
     }
   }
 }
