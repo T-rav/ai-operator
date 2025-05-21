@@ -42,89 +42,109 @@ function convertFloat32ToS16PCM(float32Array) {
 
 function enqueueAudioFromProto(arrayBuffer) {
   try {
-    const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
-    if (!parsedFrame.audio) {
-      console.log('Frame does not contain audio data');
+    const bytes = new Uint8Array(arrayBuffer);
+    const firstByte = bytes[0];
+    const fieldNumber = firstByte >> 3;
+    const wireType = firstByte & 0x07;
+
+    if (fieldNumber !== 2 || wireType !== 2) { // Must be field 2 (audio) and wire type 2 (length-delimited)
+      console.warn('Not an audio frame:', { fieldNumber, wireType });
       return false;
     }
 
-    // Add debug logging
-    console.log('Received audio frame:', {
-      id: parsedFrame.audio.id,
-      name: parsedFrame.audio.name,
-      audioLength: parsedFrame.audio.audio ? parsedFrame.audio.audio.length : 0,
-      sampleRate: parsedFrame.audio.sample_rate
-    });
-
-    // Skip empty frames
-    if (!parsedFrame.audio.audio || parsedFrame.audio.audio.length === 0) {
-      console.warn('Received empty audio frame, skipping playback');
-      return false;
-    }
-
-    // Reset play time if it's been a while we haven't played anything
-    const diffTime = audioContext.currentTime - lastMessageTime;
-    if ((playTime == 0) || (diffTime > PLAY_TIME_RESET_THRESHOLD_MS)) {
-      playTime = audioContext.currentTime;
-    }
-    lastMessageTime = audioContext.currentTime;
-
-    // Get the audio data from the message
-    const audioData = parsedFrame.audio.audio;
+    // Skip the frame header (field tag + length)
+    let offset = 2;
     
-    // Get audio parameters from the frame
-    const sampleRate = parsedFrame.audio.sample_rate || SAMPLE_RATE;
-    const numChannels = parsedFrame.audio.num_channels || 1;
-    
-    // Create audio context buffer
-    const audioBuffer = audioContext.createBuffer(numChannels, audioData.length/2, sampleRate);
-    
-    // Convert bytes to float32 values
-    const channelData = audioBuffer.getChannelData(0);
-    const int16View = new Int16Array(audioData.buffer);
-    
-    // Fill the audio buffer with normalized values
-    for (let i = 0; i < channelData.length; i++) {
-      if (i < int16View.length) {
-        // Convert Int16 to normalized Float32 in range [-1, 1]
-        channelData[i] = int16View[i] / 32768.0;
+    // Skip the frame ID and name fields
+    while (offset < bytes.length) {
+      const tag = bytes[offset];
+      const fieldNum = tag >> 3;
+      const wType = tag & 0x07;
+      offset++;
+      
+      if (fieldNum === 3) { // audio data field
+        const length = bytes[offset];
+        offset++;
+        
+        // Get the audio data
+        const audioData = bytes.slice(offset, offset + length);
+        
+        // Reset play time if it's been a while we haven't played anything
+        const diffTime = audioContext.currentTime - lastMessageTime;
+        if ((playTime == 0) || (diffTime > PLAY_TIME_RESET_THRESHOLD_MS)) {
+          playTime = audioContext.currentTime;
+        }
+        lastMessageTime = audioContext.currentTime;
+        
+        // Create audio context buffer
+        const audioBuffer = audioContext.createBuffer(1, audioData.length/2, SAMPLE_RATE);
+        
+        // Convert bytes to float32 values
+        const channelData = audioBuffer.getChannelData(0);
+        const int16View = new Int16Array(audioData.buffer);
+        
+        // Fill the audio buffer with normalized values
+        for (let i = 0; i < channelData.length; i++) {
+          if (i < int16View.length) {
+            // Convert Int16 to normalized Float32 in range [-1, 1]
+            channelData[i] = int16View[i] / 32768.0;
+          }
+        }
+        
+        console.log(`Created audio buffer: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
+        
+        // Skip playing if we've been interrupted
+        if (!isAIResponding) {
+          console.log('Skipping audio playback due to interruption');
+          return false;
+        }
+        
+        const audioSource = new AudioBufferSourceNode(audioContext);
+        audioSource.buffer = audioBuffer;
+        
+        // Connect output to analyzer and destination
+        audioSource.connect(analyser);
+        audioSource.connect(audioContext.destination);
+        
+        // Start displaying AI transcriptions as audio plays
+        processAIMessageQueue();
+        
+        // Add to active sources for potential stopping
+        activeAudioSources.push(audioSource);
+        
+        // Clean up when finished
+        audioSource.onended = function() {
+          // Remove from active sources array
+          const index = activeAudioSources.indexOf(audioSource);
+          if (index > -1) {
+            activeAudioSources.splice(index, 1);
+          }
+        };
+        
+        audioSource.start(playTime);
+        playTime = playTime + audioBuffer.duration;
+        
+        return true;
+      }
+      
+      // Skip other fields based on wire type
+      switch (wType) {
+        case 0: // varint
+          while (bytes[offset] & 0x80) offset++;
+          offset++;
+          break;
+        case 2: // length-delimited
+          const len = bytes[offset];
+          offset += len + 1;
+          break;
+        default:
+          console.warn('Unexpected wire type in audio frame:', wType);
+          return false;
       }
     }
     
-    console.log(`Created audio buffer: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
-    
-    // Skip playing if we've been interrupted
-    if (!isAIResponding) {
-      console.log('Skipping audio playback due to interruption');
-      return;
-    }
-    
-    const audioSource = new AudioBufferSourceNode(audioContext);
-    audioSource.buffer = audioBuffer;
-    
-    // Connect output to analyzer and destination
-    audioSource.connect(analyser);
-    audioSource.connect(audioContext.destination);
-    
-    // Start displaying AI transcriptions as audio plays
-    processAIMessageQueue();
-    
-    // Add to active sources for potential stopping
-    activeAudioSources.push(audioSource);
-    
-    // Clean up when finished
-    audioSource.onended = function() {
-      // Remove from active sources array
-      const index = activeAudioSources.indexOf(audioSource);
-      if (index > -1) {
-        activeAudioSources.splice(index, 1);
-      }
-    };
-    
-    audioSource.start(playTime);
-    playTime = playTime + audioBuffer.duration;
-    
-    return true;
+    console.warn('No audio data found in frame');
+    return false;
   } catch (error) {
     console.error('Error in enqueueAudioFromProto:', error);
     return false;
