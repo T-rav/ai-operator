@@ -13,8 +13,6 @@ function calculateRMS(audioData) {
 
 function convertFloat32ToS16PCM(float32Array) {
   try {
-    console.log('Converting Float32 to S16PCM, input length:', float32Array.length);
-    
     let int16Array = new Int16Array(float32Array.length);
 
     for (let i = 0; i < float32Array.length; i++) {
@@ -120,8 +118,6 @@ function enqueueAudioFromProto(arrayBuffer) {
             channelData[i] = int16View[i] / 32768.0;
           }
         }
-        
-        console.log(`Created audio buffer: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
         
         // Skip playing if we've been interrupted
         if (!isAIResponding) {
