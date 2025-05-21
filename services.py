@@ -35,6 +35,8 @@ class ServiceManager:
                 vad_analyzer=SileroVADAnalyzer(),
                 vad_audio_passthrough=True,
                 session_timeout=config.SESSION_TIMEOUT,
+                host="0.0.0.0",  # Listen on all interfaces
+                port=8765,       # Explicitly set port to 8765
             )
         )
         return self.transport

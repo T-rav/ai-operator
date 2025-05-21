@@ -1,6 +1,8 @@
 from loguru import logger
 from pipecat.frames.frames import TranscriptionFrame
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
+# Import correct protobuf definitions from pipecat
+from pipecat.frames.protobufs.frames_pb2 import Frame, AudioRawFrame
 
 
 class CustomProtobufSerializer(ProtobufFrameSerializer):
@@ -20,8 +22,8 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
                 # Check if audio is empty
                 if audio_length == 0:
                     logger.warning("Empty audio frame detected, this won't play in the browser")
-                    
-                # Make sure the type name field is set correctly for client
+                
+                # Important: Make sure we map OutputAudioRawFrame to AudioRawFrame in protobuf
                 if hasattr(frame, 'name') and frame.name != 'AudioRawFrame':
                     logger.debug(f"Changing audio frame name from '{frame.name}' to 'AudioRawFrame'")
                     frame.name = 'AudioRawFrame'
@@ -96,6 +98,7 @@ class CustomProtobufSerializer(ProtobufFrameSerializer):
                     try:
                         from google.protobuf.message import DecodeError
                         from google.protobuf import json_format
+                        # Use the official pipecat protobuf definition
                         from pipecat.frames.protobufs.frames_pb2 import Frame
                         
                         # Create a test frame and try to partially parse
