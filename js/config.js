@@ -7,8 +7,8 @@ const PLAY_TIME_RESET_THRESHOLD_MS = 1.0;
 let Frame = null;
 
 // Speech detection configuration
-const SPEECH_THRESHOLD = 0.01;
-const REQUIRED_CONSECUTIVE_FRAMES = 2;
+const SPEECH_THRESHOLD = 0.03;
+const REQUIRED_CONSECUTIVE_FRAMES = 4;
 
 // Initialize protobuf
 function initProtobuf() {
