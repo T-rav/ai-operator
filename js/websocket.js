@@ -258,14 +258,14 @@ function handleWebSocketOpen(event) {
             console.log('Converted to PCM byte array, length:', pcmByteArray.length, 'bytes');
             
             try {
-              // Create frame matching server's expected format
+              // Create frame matching server's expected format from frames.proto
               const frame = {
-                frame: {
+                data: {
                   oneofKind: "audio",
                   audio: {
                     id: 0,
                     name: "AudioRawFrame",
-                    audio: pcmByteArray,
+                    audio: Array.from(pcmByteArray),  // Convert to regular array for protobuf compatibility
                     sample_rate: SAMPLE_RATE,
                     num_channels: NUM_CHANNELS,
                     pts: 0
@@ -352,9 +352,12 @@ function sendInterruptionSignal() {
   try {
     // Create interruption frame with simpler object structure
     const interruptData = {
-      start_interruption: {
-        user_id: 'user',
-        timestamp: Date.now().toString()
+      data: {
+        oneofKind: "start_interruption",
+        start_interruption: {
+          user_id: 'user',
+          timestamp: Date.now().toString()
+        }
       }
     };
     

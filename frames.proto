@@ -15,7 +15,7 @@ package pipecat;
 // Frame message structure
 message Frame {
   oneof data {
-    AudioFrame audio = 1;
+    AudioRawFrame audio = 1;
     TextFrame text = 2;
     TranscriptionFrame transcription = 3;
     MessageFrame message = 4;
@@ -24,7 +24,7 @@ message Frame {
 }
 
 // Audio frame structure
-message AudioFrame {
+message AudioRawFrame {
   uint64 id = 1;
   string name = 2;
   bytes audio = 3;
