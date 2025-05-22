@@ -72,79 +72,116 @@ class SessionTimeoutHandler:
             logger.error(f"Error during call termination: {e}")
 
 
-async def main():
-    transport = WebsocketServerTransport(
-        params=WebsocketServerParams(
-            serializer=ProtobufFrameSerializer(),
-            audio_out_enabled=True,
-            add_wav_header=True,
-            vad_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-            vad_audio_passthrough=True,
-            session_timeout=60 * 3,  # 3 minutes
-        )
-    )
-
-    llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
-
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-
-    # todo : this might be better suited for a different service? OpenAI? Not that this is bad? But is it the best?
-    tts = CartesiaTTSService(
-        api_key=os.getenv("CARTESIA_API_KEY"),
-        voice_id="71a7ad14-091c-4e8e-a314-022ece01c121" 
-        # "71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
-        #"694f9389-aac1-45b6-b726-9d9369183238" # Sarah USA 
-    )
-
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful LLM in a WebRTC call. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way.",
-        },
-    ]
-
-    context = OpenAILLMContext(messages)
-    context_aggregator = llm.create_context_aggregator(context)
-
-    pipeline = Pipeline(
-        [
-            transport.input(),  # Websocket input from client
-            stt,  # Speech-To-Text
-            context_aggregator.user(),
-            llm,  # LLM
-            tts,  # Text-To-Speech
-            transport.output(),  # Websocket output to client
-            context_aggregator.assistant(),
+class Bot:
+    """Main bot class that sets up and runs the conversation pipeline."""
+    
+    def __init__(self):
+        self.transport = None
+        self.llm = None
+        self.stt = None
+        self.tts = None
+        self.context = None
+        self.context_aggregator = None
+        self.pipeline = None
+        self.task = None
+        self.runner = None
+        self.messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful LLM in a WebRTC call. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way.",
+            },
         ]
-    )
+    
+    def setup_transport(self):
+        """Set up the WebSocket transport."""
+        self.transport = WebsocketServerTransport(
+            params=WebsocketServerParams(
+                serializer=ProtobufFrameSerializer(),
+                audio_out_enabled=True,
+                add_wav_header=True,
+                vad_enabled=True,
+                vad_analyzer=SileroVADAnalyzer(),
+                vad_audio_passthrough=True,
+                session_timeout=60 * 3,  # 3 minutes
+            )
+        )
+        return self.transport
+    
+    def setup_services(self):
+        """Set up LLM, STT, and TTS services."""
+        self.llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
+        
+        self.stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+        
+        # todo : this might be better suited for a different service? OpenAI? Not that this is bad? But is it the best?
+        self.tts = CartesiaTTSService(
+            api_key=os.getenv("CARTESIA_API_KEY"),
+            voice_id="71a7ad14-091c-4e8e-a314-022ece01c121" 
+            # "71a7ad14-091c-4e8e-a314-022ece01c121",  # British Reading Lady
+            #"694f9389-aac1-45b6-b726-9d9369183238" # Sarah USA 
+        )
+    
+    def setup_context(self):
+        """Set up the LLM context and aggregator."""
+        self.context = OpenAILLMContext(self.messages)
+        self.context_aggregator = self.llm.create_context_aggregator(self.context)
+    
+    def setup_pipeline(self):
+        """Set up the processing pipeline."""
+        self.pipeline = Pipeline(
+            [
+                self.transport.input(),  # Websocket input from client
+                self.stt,  # Speech-To-Text
+                self.context_aggregator.user(),
+                self.llm,  # LLM
+                self.tts,  # Text-To-Speech
+                self.transport.output(),  # Websocket output to client
+                self.context_aggregator.assistant(),
+            ]
+        )
+        
+        self.task = PipelineTask(
+            self.pipeline,
+            params=PipelineParams(
+                audio_in_sample_rate=16000,
+                audio_out_sample_rate=16000,
+                allow_interruptions=True,
+            ),
+        )
+    
+    def setup_event_handlers(self):
+        """Set up event handlers for the transport."""
+        @self.transport.event_handler("on_client_connected")
+        async def on_client_connected(transport, client):
+            # Kick off the conversation.
+            self.messages.append({"role": "system", "content": "Please introduce yourself to the user."})
+            await self.task.queue_frames([self.context_aggregator.user().get_context_frame()])
 
-    task = PipelineTask(
-        pipeline,
-        params=PipelineParams(
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=16000,
-            allow_interruptions=True,
-        ),
-    )
+        @self.transport.event_handler("on_session_timeout")
+        async def on_session_timeout(transport, client):
+            logger.info(f"Entering in timeout for {client.remote_address}")
+            timeout_handler = SessionTimeoutHandler(self.task, self.tts)
+            await timeout_handler.handle_timeout(client)
+    
+    def initialize(self):
+        """Initialize all components of the bot."""
+        self.setup_transport()
+        self.setup_services()
+        self.setup_context()
+        self.setup_pipeline()
+        self.setup_event_handlers()
+        self.runner = PipelineRunner()
+    
+    async def run(self):
+        """Run the bot."""
+        await self.runner.run(self.task)
 
-    @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport, client):
-        # Kick off the conversation.
-        messages.append({"role": "system", "content": "Please introduce yourself to the user."})
-        await task.queue_frames([context_aggregator.user().get_context_frame()])
 
-    @transport.event_handler("on_session_timeout")
-    async def on_session_timeout(transport, client):
-        logger.info(f"Entering in timeout for {client.remote_address}")
-
-        timeout_handler = SessionTimeoutHandler(task, tts)
-
-        await timeout_handler.handle_timeout(client)
-
-    runner = PipelineRunner()
-
-    await runner.run(task)
+async def main():
+    """Initialize and run the bot."""
+    bot = Bot()
+    bot.initialize()
+    await bot.run()
 
 
 if __name__ == "__main__":
