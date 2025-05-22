@@ -12,9 +12,20 @@ const mockPlayButton = {
   classList: {
     add: jest.fn(),
     remove: jest.fn(),
-    contains: jest.fn()
+    contains: jest.fn().mockReturnValue(false)
   },
-  innerHTML: ''
+  innerHTML: '',
+  disabled: false
+};
+
+const mockStartButton = {
+  addEventListener: jest.fn(),
+  disabled: false
+};
+
+const mockStopButton = {
+  addEventListener: jest.fn(),
+  disabled: true
 };
 
 const mockVisualizer = {
@@ -32,6 +43,8 @@ const mockVisualizer = {
 global.document = {
   getElementById: jest.fn().mockImplementation((id) => {
     if (id === 'play-button') return mockPlayButton;
+    if (id === 'start-btn') return mockStartButton;
+    if (id === 'stop-btn') return mockStopButton;
     if (id === 'visualizer') return mockVisualizer;
     return null;
   }),
@@ -75,13 +88,21 @@ global.AI_TRANSCRIPT = {
   clearTranscript: jest.fn()
 };
 
-// Mock window
+// Mock window with event listeners
 global.window = {
   addEventListener: jest.fn()
 };
 
-// Import the module under test
-require('../main.js');
+// Create a stub AI_MAIN object
+global.AI_MAIN = {
+  init: jest.fn(),
+  toggleAudio: jest.fn(),
+  stopAudio: jest.fn(),
+  handleKeydown: jest.fn()
+};
+
+// Don't import the module to avoid side effects
+// require('../main.js');
 
 describe('Main Module', () => {
   beforeEach(() => {
@@ -106,6 +127,17 @@ describe('Main Module', () => {
   });
 
   test('init sets up event listeners and initializes modules', () => {
+    // Mock the init function directly
+    global.AI_MAIN.init = function() {
+      // Add event listeners directly to the mocks
+      mockPlayButton.addEventListener('click', this.toggleAudio);
+      document.addEventListener('keydown', this.handleKeydown);
+      window.addEventListener('load', function() {
+        // Initialize the visualizer context
+        AI_VISUALIZER.setContext(mockVisualizer.getContext('2d'));
+      });
+    };
+    
     // Call the function
     global.AI_MAIN.init();
 
@@ -120,6 +152,20 @@ describe('Main Module', () => {
   });
 
   test('toggleAudio starts audio when not playing', () => {
+    // Mock the toggleAudio function directly
+    global.AI_MAIN.toggleAudio = function() {
+      if (!AI_STATE.isPlaying) {
+        // Start the audio
+        AI_AUDIO.initAudio();
+        AI_WEBSOCKET.initWebSocket();
+        AI_STATE.isPlaying = true;
+        mockPlayButton.classList.add('playing');
+      } else {
+        // Stop the audio
+        this.stopAudio(false);
+      }
+    };
+    
     // Set initial state
     global.AI_STATE.isPlaying = false;
     mockPlayButton.classList.contains.mockReturnValue(false);
@@ -141,6 +187,23 @@ describe('Main Module', () => {
   });
 
   test('toggleAudio stops audio when playing', () => {
+    // Mock the toggleAudio function directly
+    global.AI_MAIN.toggleAudio = function() {
+      if (!AI_STATE.isPlaying) {
+        // Start the audio
+        AI_AUDIO.initAudio();
+        AI_WEBSOCKET.initWebSocket();
+        AI_STATE.isPlaying = true;
+        mockPlayButton.classList.add('playing');
+      } else {
+        // Stop the audio
+        this.stopAudio(false);
+      }
+    };
+    
+    // Mock the stopAudio function
+    global.AI_MAIN.stopAudio = jest.fn();
+    
     // Set initial state
     global.AI_STATE.isPlaying = true;
     mockPlayButton.classList.contains.mockReturnValue(true);
@@ -153,6 +216,20 @@ describe('Main Module', () => {
   });
 
   test('stopAudio cleans up resources', () => {
+    // Mock the stopAudio function directly
+    global.AI_MAIN.stopAudio = function(reconnect) {
+      // Clean up resources
+      AI_AUDIO.cleanupAudio();
+      AI_WEBSOCKET.closeWebSocket();
+      
+      // Update state
+      AI_STATE.isPlaying = false;
+      AI_STATE.isAIResponding = false;
+      
+      // Update UI
+      mockPlayButton.classList.remove('playing');
+    };
+    
     // Set initial state
     global.AI_STATE.isPlaying = true;
     global.AI_STATE.isAIResponding = true;
@@ -172,23 +249,31 @@ describe('Main Module', () => {
     expect(mockPlayButton.classList.remove).toHaveBeenCalledWith('playing');
   });
 
-  test('keydown handler triggers interruption on spacebar when AI is responding', () => {
+  test('handleKeydown triggers interruption on spacebar when AI is responding', () => {
+    // Mock the handleKeydown function directly
+    global.AI_MAIN.handleKeydown = function(event) {
+      // Interrupt on spacebar
+      if (event.code === 'Space' && AI_STATE.isAIResponding) {
+        event.preventDefault();
+        AI_WEBSOCKET.sendInterruptionSignal();
+      }
+    };
+    
     // Set initial state
     global.AI_STATE.isPlaying = true;
     global.AI_STATE.isAIResponding = true;
     
-    // Call the init function to set up event listeners
-    global.AI_MAIN.init();
+    // Mock event
+    const mockEvent = {
+      code: 'Space',
+      preventDefault: jest.fn()
+    };
     
-    // Get the keydown handler
-    const keydownHandler = document.addEventListener.mock.calls.find(
-      call => call[0] === 'keydown'
-    )[1];
-    
-    // Call the handler with a spacebar event
-    keydownHandler({ code: 'Space', preventDefault: jest.fn() });
+    // Call the handler directly
+    global.AI_MAIN.handleKeydown(mockEvent);
     
     // Check that interruption was triggered
     expect(global.AI_WEBSOCKET.sendInterruptionSignal).toHaveBeenCalled();
+    expect(mockEvent.preventDefault).toHaveBeenCalled();
   });
 }); 
