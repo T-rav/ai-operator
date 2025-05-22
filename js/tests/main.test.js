@@ -39,6 +39,9 @@ const mockVisualizer = {
   height: 200
 };
 
+// Create mock event listeners
+const mockDocumentAddEventListener = jest.fn();
+
 // Mock document
 global.document = {
   getElementById: jest.fn().mockImplementation((id) => {
@@ -48,7 +51,7 @@ global.document = {
     if (id === 'visualizer') return mockVisualizer;
     return null;
   }),
-  addEventListener: jest.fn()
+  addEventListener: mockDocumentAddEventListener
 };
 
 // Mock required modules
@@ -132,7 +135,7 @@ describe('Main Module', () => {
     global.AI_MAIN.init = function() {
       // Add event listeners directly to the mocks
       mockPlayButton.addEventListener('click', this.toggleAudio);
-      document.addEventListener('keydown', this.handleKeydown);
+      mockDocumentAddEventListener('keydown', this.handleKeydown);
       mockWindowAddEventListener('load', function() {
         // Initialize the visualizer context
         AI_VISUALIZER.setContext(mockVisualizer.getContext('2d'));
@@ -149,7 +152,7 @@ describe('Main Module', () => {
     expect(mockWindowAddEventListener).toHaveBeenCalledWith('load', expect.any(Function));
     
     // Check that the document keydown event listener was added
-    expect(document.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
+    expect(mockDocumentAddEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
   });
 
   test('toggleAudio starts audio when not playing', () => {
