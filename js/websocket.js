@@ -184,6 +184,12 @@ function sendInterruptionSignal() {
     
     // Add system message indicating interruption
     AI_TRANSCRIPT.addMessageToTranscript('User interrupted AI', 'system');
+    
+    // Reset the interruption flag after a short delay to allow new audio
+    setTimeout(() => {
+      AI_STATE.isBeingInterrupted = false;
+      console.log('User interruption state reset, ready for new audio');
+    }, 500); // 500ms delay should be enough to process the interruption
   } catch (error) {
     console.error('Error sending interruption signal:', error);
   }
@@ -202,6 +208,12 @@ function handleBotInterruption() {
   
   // Add system message indicating interruption
   AI_TRANSCRIPT.addMessageToTranscript('AI was interrupted', 'system');
+  
+  // Reset the interruption flag after a short delay to allow new audio
+  setTimeout(() => {
+    AI_STATE.isBeingInterrupted = false;
+    console.log('Interruption state reset, ready for new audio');
+  }, 500); // 500ms delay should be enough to process the interruption
 }
 
 // Close WebSocket connection
