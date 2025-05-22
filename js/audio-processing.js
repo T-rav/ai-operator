@@ -13,11 +13,45 @@ function calculateRMS(audioData) {
 
 function convertFloat32ToS16PCM(float32Array) {
   try {
+    // Check for invalid input
+    if (!float32Array || float32Array.length === 0) {
+      console.error('Invalid input to convertFloat32ToS16PCM: empty or null array');
+      return new Int16Array(0); // Return empty array instead of throwing
+    }
+    
+    console.log('Converting audio data of length:', float32Array.length, 'bytes');
+    
+    // Log data stats for debugging
+    let min = Infinity, max = -Infinity, sum = 0;
+    for (let i = 0; i < float32Array.length; i++) {
+      min = Math.min(min, float32Array[i]);
+      max = Math.max(max, float32Array[i]);
+      sum += float32Array[i];
+    }
+    const avg = sum / float32Array.length;
+    console.log('Audio data stats - min:', min, 'max:', max, 'avg:', avg);
+    
+    // Create a properly sized output array
     let int16Array = new Int16Array(float32Array.length);
 
+    // Check for sample values
+    let hasNonZeroSamples = false;
+    let nonZeroCount = 0;
+    
     for (let i = 0; i < float32Array.length; i++) {
         let clampedValue = Math.max(-1, Math.min(1, float32Array[i]));
         int16Array[i] = clampedValue < 0 ? clampedValue * 32768 : clampedValue * 32767;
+        
+        if (clampedValue !== 0) {
+          hasNonZeroSamples = true;
+          nonZeroCount++;
+        }
+    }
+    
+    if (!hasNonZeroSamples) {
+      console.warn('Audio data contains only zeros');
+    } else {
+      console.log('Audio data contains', nonZeroCount, 'non-zero samples out of', float32Array.length, `(${(nonZeroCount/float32Array.length*100).toFixed(2)}%)`);
     }
     
     // Log endianness info for debugging
@@ -31,10 +65,12 @@ function convertFloat32ToS16PCM(float32Array) {
       window.endianCheckDone = true;
     }
     
+    console.log('Conversion complete, int16Array length:', int16Array.length, 'bytes (', int16Array.buffer.byteLength, 'buffer bytes)');
     return int16Array;
   } catch (error) {
     console.error('Error converting audio format:', error);
-    throw error;
+    // Return empty array instead of throwing
+    return new Int16Array(0);
   }
 }
 

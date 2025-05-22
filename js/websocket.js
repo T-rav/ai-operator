@@ -240,14 +240,22 @@ function handleWebSocketOpen(event) {
 
       // Handle messages from the audio processor
       audioWorkletNode.port.onmessage = (event) => {
-        const { type, audioData, rms } = event.data;
+        const { type, audioData, rms, stats } = event.data;
 
         switch (type) {
+          case 'audioStats':
+            console.log('Audio stats from worklet:', stats);
+            break;
+            
           case 'audioData':
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
+            console.log('Received audio data from worklet, length:', audioData.length);
+            
             const pcmS16Array = convertFloat32ToS16PCM(audioData);
             const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
+            
+            console.log('Converted to PCM byte array, length:', pcmByteArray.length, 'bytes');
             
             try {
               // Create frame matching server's expected format
@@ -265,12 +273,21 @@ function handleWebSocketOpen(event) {
                 }
               };
 
+              console.log('Created frame object with audio data length:', pcmByteArray.length);
+              
               // Create and encode the protobuf message
               const protoFrame = Frame.create(frame);
+              console.log('Created protobuf frame');
+              
               const encodedFrame = Frame.encode(protoFrame).finish();
+              console.log('Encoded frame size:', encodedFrame.byteLength, 'bytes');
 
               if (encodedFrame.byteLength > 0) {
+                console.log('Sending frame to server, size:', encodedFrame.byteLength, 'bytes');
                 ws.send(encodedFrame);
+                console.log('Frame sent successfully');
+              } else {
+                console.error('Encoded frame has zero bytes, not sending');
               }
             } catch (error) {
               console.error('Error creating/sending audio frame:', error);

@@ -27,6 +27,43 @@ class AudioProcessor extends AudioWorkletProcessor {
     // Calculate RMS and check for speech
     const rms = this.calculateRMS(channel);
     
+    // Periodically log audio data stats
+    if (this._logCounter === undefined) {
+      this._logCounter = 0;
+    }
+    this._logCounter++;
+    
+    // Log every 100 frames (about 2 seconds)
+    if (this._logCounter % 100 === 0) {
+      // Create stats to send to main thread
+      let min = Number.POSITIVE_INFINITY;
+      let max = Number.NEGATIVE_INFINITY;
+      let sum = 0;
+      let nonZeros = 0;
+      
+      for (let i = 0; i < channel.length; i++) {
+        min = Math.min(min, channel[i]);
+        max = Math.max(max, channel[i]);
+        sum += channel[i];
+        if (channel[i] !== 0) {
+          nonZeros++;
+        }
+      }
+      
+      // Send stats to main thread
+      this.port.postMessage({
+        type: 'audioStats',
+        stats: {
+          length: channel.length,
+          min: min,
+          max: max,
+          avg: sum / channel.length,
+          rms: rms,
+          nonZeroPercent: (nonZeros / channel.length) * 100
+        }
+      });
+    }
+    
     if (rms > this._speechThreshold) {
       this._consecutiveFramesAboveThreshold++;
       this._consecutiveFramesBelowThreshold = 0;
