@@ -28,11 +28,11 @@ function handleWebSocketMessage(event) {
   if (AI_STATE.isPlaying && AI_CONFIG.Frame) {
     try {
       const parsedFrame = AI_CONFIG.Frame.decode(new Uint8Array(arrayBuffer));
-      console.log('Received frame:', parsedFrame); // Debug log
+      // Removed noisy log: console.log('Received frame:', parsedFrame);
 
       // Handle transcription messages
       if (parsedFrame?.transcription) {
-        console.log('Transcription:', parsedFrame.transcription.text); // Debug log
+        console.log('Transcription:', parsedFrame.transcription.text); // Keep this useful log
         AI_TRANSCRIPT.addMessageToTranscript(parsedFrame.transcription.text, 'user');
       }
       

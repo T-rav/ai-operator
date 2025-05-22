@@ -78,7 +78,6 @@ function enqueueAudioFromProto(arrayBuffer) {
       
       // Add to active sources for potential stopping
       activeAudioSources.push(source);
-      console.log('Added audio source, total sources:', activeAudioSources.length);
       
       // Clean up when finished
       source.onended = function() {
@@ -86,7 +85,6 @@ function enqueueAudioFromProto(arrayBuffer) {
         const index = activeAudioSources.indexOf(source);
         if (index > -1) {
           activeAudioSources.splice(index, 1);
-          console.log('Audio source finished naturally, remaining:', activeAudioSources.length);
         }
       };
       
