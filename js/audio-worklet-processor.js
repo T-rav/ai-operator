@@ -3,8 +3,10 @@ class AudioProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this._consecutiveFramesAboveThreshold = 0;
+    this._consecutiveFramesBelowThreshold = 0;
     this._requiredConsecutiveFrames = 3;
-    this._speechThreshold = 0.03;
+    this._requiredSilenceFrames = 25; // About 500ms of silence needed to end speech
+    this._speechThreshold = 0.015; // Lower threshold to better detect quiet speech
     this._isSpeaking = false;
   }
 
@@ -27,6 +29,7 @@ class AudioProcessor extends AudioWorkletProcessor {
     
     if (rms > this._speechThreshold) {
       this._consecutiveFramesAboveThreshold++;
+      this._consecutiveFramesBelowThreshold = 0;
       
       if (!this._isSpeaking && this._consecutiveFramesAboveThreshold >= this._requiredConsecutiveFrames) {
         this._isSpeaking = true;
@@ -35,8 +38,13 @@ class AudioProcessor extends AudioWorkletProcessor {
     } else {
       this._consecutiveFramesAboveThreshold = 0;
       if (this._isSpeaking) {
-        this._isSpeaking = false;
-        this.port.postMessage({ type: 'speechEnd' });
+        this._consecutiveFramesBelowThreshold++;
+        // Only end speech after enough silence frames
+        if (this._consecutiveFramesBelowThreshold >= this._requiredSilenceFrames) {
+          this._isSpeaking = false;
+          this._consecutiveFramesBelowThreshold = 0;
+          this.port.postMessage({ type: 'speechEnd' });
+        }
       }
     }
 
