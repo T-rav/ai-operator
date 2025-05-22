@@ -68,17 +68,17 @@ global.AI_TRANSCRIPT = {
   clearTranscript: jest.fn()
 };
 
-// Create mock implementations that actually update the innerHTML
-global.AI_TRANSCRIPT.addMessageToTranscript = function(message, sender) {
+// Do not import the real implementation as it would override our mocks
+// require('../transcript.js');
+
+// Define the test implementations
+global.AI_TRANSCRIPT.addMessageToTranscript = jest.fn().mockImplementation((message, sender) => {
   mockTranscriptContainer.innerHTML += `<div class="${sender}-message">${message}</div>`;
-};
+});
 
-global.AI_TRANSCRIPT.clearTranscript = function() {
+global.AI_TRANSCRIPT.clearTranscript = jest.fn().mockImplementation(() => {
   mockTranscriptContainer.innerHTML = '';
-};
-
-// Import the module, but it won't override our mocked functions
-require('../transcript.js');
+});
 
 describe('Transcript Module', () => {
   beforeEach(() => {

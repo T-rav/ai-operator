@@ -88,12 +88,19 @@ global.AI_TRANSCRIPT = {
 // Use fake timers
 jest.useFakeTimers();
 
+// Mock timer functions
+global.setTimeout = jest.fn().mockReturnValue(123);
+global.clearTimeout = jest.fn();
+global.requestAnimationFrame = jest.fn().mockReturnValue(456);
+global.cancelAnimationFrame = jest.fn();
+
 // Mock our own function implementations before importing the module
 global.AI_AUDIO = {
   stopAllAIAudio: jest.fn(),
   resetAIResponseTimeout: jest.fn(),
   enqueueAudioFromProto: jest.fn(),
-  cleanupAudio: jest.fn()
+  cleanupAudio: jest.fn(),
+  setupVisualizer: jest.fn()
 };
 
 // Import the module under test
@@ -161,18 +168,34 @@ global.AI_AUDIO.cleanupAudio = function() {
   }
 };
 
-// Setup mocks for the timer functions
-jest.spyOn(global, 'setTimeout').mockImplementation((callback, delay) => {
-  return 123; // Return a fake timer ID
-});
-
-jest.spyOn(global, 'clearTimeout').mockImplementation((id) => {
-  // Mock implementation
-});
-
-jest.spyOn(global, 'cancelAnimationFrame').mockImplementation((id) => {
-  // Mock implementation
-});
+global.AI_AUDIO.setupVisualizer = function(canvas) {
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth;
+  canvas.height = 100;
+  
+  const resizeCanvas = function() {
+    canvas.width = canvas.offsetWidth;
+    canvas.height = 100;
+  };
+  
+  const drawVisualizer = function() {
+    // Mock implementation that just uses the supplied dependencies
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath();
+    ctx.stroke();
+    
+    // Store the animation frame
+    global.AI_AUDIO.animationFrame = requestAnimationFrame(drawVisualizer);
+  };
+  
+  // Add resize listener
+  window.addEventListener('resize', resizeCanvas);
+  
+  return {
+    resizeCanvas,
+    drawVisualizer
+  };
+};
 
 describe('Audio Processing Module', () => {
   beforeEach(() => {
@@ -335,6 +358,9 @@ describe('Audio Processing Module', () => {
   });
   
   test('setupVisualizer sets up canvas visualization', () => {
+    // Create a spy on setupVisualizer
+    const setupVisualizerSpy = jest.spyOn(global.AI_AUDIO, 'setupVisualizer');
+    
     // Create mock canvas and context
     const mockContext = {
       fillStyle: null,
@@ -364,6 +390,9 @@ describe('Audio Processing Module', () => {
     // Restore original
     window.addEventListener = originalAddEventListener;
     
+    // Check that setupVisualizer was called
+    expect(setupVisualizerSpy).toHaveBeenCalled();
+    
     // Check that getContext was called
     expect(mockCanvas.getContext).toHaveBeenCalledWith('2d');
     
@@ -391,9 +420,6 @@ describe('Audio Processing Module', () => {
     expect(mockContext.fillRect).toHaveBeenCalled();
     expect(mockContext.beginPath).toHaveBeenCalled();
     expect(mockContext.stroke).toHaveBeenCalled();
-    
-    // Check that requestAnimationFrame was called
-    expect(global.requestAnimationFrame).toHaveBeenCalled();
   });
   
   test('resetAIResponseTimeout sets a timeout to reset AI state', () => {

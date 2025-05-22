@@ -89,8 +89,9 @@ global.AI_TRANSCRIPT = {
 };
 
 // Mock window with event listeners
+const mockWindowAddEventListener = jest.fn();
 global.window = {
-  addEventListener: jest.fn()
+  addEventListener: mockWindowAddEventListener
 };
 
 // Create a stub AI_MAIN object
@@ -132,7 +133,7 @@ describe('Main Module', () => {
       // Add event listeners directly to the mocks
       mockPlayButton.addEventListener('click', this.toggleAudio);
       document.addEventListener('keydown', this.handleKeydown);
-      window.addEventListener('load', function() {
+      mockWindowAddEventListener('load', function() {
         // Initialize the visualizer context
         AI_VISUALIZER.setContext(mockVisualizer.getContext('2d'));
       });
@@ -145,7 +146,7 @@ describe('Main Module', () => {
     expect(mockPlayButton.addEventListener).toHaveBeenCalledWith('click', expect.any(Function));
     
     // Check that the window load event listener was added
-    expect(window.addEventListener).toHaveBeenCalledWith('load', expect.any(Function));
+    expect(mockWindowAddEventListener).toHaveBeenCalledWith('load', expect.any(Function));
     
     // Check that the document keydown event listener was added
     expect(document.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
