@@ -303,6 +303,9 @@
       let startBtn = document.getElementById('startAudioBtn');
       let stopBtn = document.getElementById('stopAudioBtn');
 
+      // Variables for improved audio handling
+      let activeAudioSources = [];
+
       // Set canvas size
       function resizeCanvas() {
         visualizerCanvas.width = visualizerCanvas.offsetWidth;
@@ -421,6 +424,18 @@
               source.connect(analyser);
               source.connect(audioContext.destination);
               
+              // Add to active sources for potential stopping
+              activeAudioSources.push(source);
+              
+              // Clean up when finished
+              source.onended = function() {
+                // Remove from active sources array
+                const index = activeAudioSources.indexOf(source);
+                if (index > -1) {
+                  activeAudioSources.splice(index, 1);
+                }
+              };
+              
               source.start(playTime);
               playTime = playTime + buffer.duration;
 
@@ -460,6 +475,10 @@
               source.connect(scriptProcessor);
               scriptProcessor.connect(audioContext.destination);
 
+              // Variables for better speech detection
+              let consecutiveFramesAboveThreshold = 0;
+              const requiredConsecutiveFrames = 3; // Require multiple frames above threshold before triggering
+              
               scriptProcessor.onaudioprocess = (event) => {
                   if (!ws) {
                       return;
@@ -478,22 +497,90 @@
                   const encodedFrame = new Uint8Array(Frame.encode(frame).finish());
                   ws.send(encodedFrame);
 
-                  // Check for speech
+                  // Check for speech with improved detection
                   const rms = calculateRMS(audioData);
-                  if (rms > 0.01) { // Adjust threshold as needed
-                    if (!isSpeaking) {
+                  const speechThreshold = 0.03; // Increased threshold to reduce false positives
+                  
+                  if (rms > speechThreshold) {
+                    consecutiveFramesAboveThreshold++;
+                    
+                    // Only consider it speech if we've had multiple frames above threshold
+                    if (!isSpeaking && consecutiveFramesAboveThreshold >= requiredConsecutiveFrames) {
                       isSpeaking = true;
                       addMessageToTranscript('User speaking...', 'user');
+                      console.log('Speech detected, RMS:', rms);
+                      
+                      // Check if AI is currently responding and send interruption if so
+                      if (isAIResponding) {
+                        sendInterruptionSignal();
+                      }
                     }
+                    
                     if (silenceTimeout) {
                       clearTimeout(silenceTimeout);
                     }
+                    
                     silenceTimeout = setTimeout(() => {
                       isSpeaking = false;
-                    }, 1000); // Adjust timeout as needed
+                      console.log('Speech ended, silence detected');
+                    }, 1500); // Longer timeout (1.5 seconds) for more stable detection
+                  } else {
+                    // Reset consecutive frames counter when below threshold
+                    consecutiveFramesAboveThreshold = 0;
                   }
               };
           }).catch((error) => console.error('Error accessing microphone:', error));
+      }
+
+      // Send interruption signal to the server to stop AI response
+      function sendInterruptionSignal() {
+        if (!ws || !isAIResponding) return;
+        
+        console.log('Sending interruption signal to stop AI response');
+        
+        try {
+          const interruptFrame = Frame.create({
+            text: {
+              id: 2,
+              name: "interruption",
+              text: "interrupt"
+            }
+          });
+          
+          // Encode and send the interruption signal
+          const encodedInterrupt = Frame.encode(interruptFrame).finish();
+          ws.send(encodedInterrupt);
+          
+          // Stop all currently playing AI audio
+          stopAllAIAudio();
+          
+          // Reset AI response state
+          isAIResponding = false;
+          
+          // Add system message indicating interruption
+          addMessageToTranscript('User interrupted', 'system');
+        } catch (error) {
+          console.error('Error sending interruption signal:', error);
+        }
+      }
+
+      // Stop all currently playing AI audio
+      function stopAllAIAudio() {
+        // Stop all currently playing audio sources
+        for (let source of activeAudioSources) {
+          try {
+            source.stop();
+          } catch (e) {
+            // Ignore errors from sources that might have already stopped
+          }
+        }
+        
+        // Clear the array
+        activeAudioSources = [];
+        
+        // Reset play time to stop scheduling new audio
+        playTime = audioContext.currentTime;
+        console.log('AI audio playback interrupted');
       }
 
       function calculateRMS(audioData) {
@@ -559,6 +646,9 @@
           if (silenceTimeout) {
               clearTimeout(silenceTimeout);
           }
+          
+          // Stop any playing audio
+          stopAllAIAudio();
           
           // Reset AI response tracking
           isAIResponding = false;
