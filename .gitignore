@@ -173,3 +173,9 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .windsurfrules.txt
+
+# Node
+node_modules/
+
+# Tests
+coverage/

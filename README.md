@@ -53,6 +53,44 @@ python -m http.server
 
 Then, visit `http://localhost:8000` in your browser to start a conversation.
 
+## Testing
+
+The project includes comprehensive testing for both backend Python code and frontend JavaScript components.
+
+### Running Python Tests
+
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Run tests
+pytest
+
+# Run tests with coverage report
+pytest --cov=. tests/
+```
+
+### Running JavaScript Tests
+
+```bash
+# Install JS dependencies
+npm install
+
+# Run tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+```
+
+## Test Coverage
+
+- **Backend Tests**: Unit tests for the Bot class and SessionTimeoutHandler using pytest and pytest-asyncio
+- **Frontend Tests**: 
+  - JavaScript unit tests for audio processing
+  - WebSocket communication testing
+  - Mock-based testing of client-side components
+
 ## Technical Architecture
 
 The system uses a pipeline architecture:

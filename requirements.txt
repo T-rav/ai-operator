@@ -1,2 +1,8 @@
 python-dotenv
 pipecat-ai[cartesia,openai,silero,websocket,deepgram]
+
+# Testing dependencies
+pytest==7.4.0
+pytest-asyncio==0.21.1
+pytest-mock==3.11.1
+coverage==7.3.2

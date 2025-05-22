@@ -1,0 +1,40 @@
+{
+  "name": "ai-operator",
+  "version": "1.0.0",
+  "description": "AI Operator WebRTC application",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/ai-operator.git"
+  },
+  "keywords": [
+    "ai",
+    "webrtc",
+    "audio"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.6.0",
+    "jest-environment-jsdom": "^29.6.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "js/*.js",
+      "!js/tests/**"
+    ],
+    "coverageDirectory": "coverage",
+    "moduleDirectories": [
+      "node_modules",
+      "js"
+    ]
+  }
+} 
