@@ -85,22 +85,6 @@ function completeCurrentAIMessage() {
   }
 }
 
-// Immediately end all AI message processing due to interruption
-function stopAITranscription() {
-  // Complete current message to show what was said so far
-  if (isDisplayingMessage) {
-    completeCurrentAIMessage();
-  }
-  
-  // Clear any queued messages
-  aiMessageQueue = [];
-  
-  // Prevent new messages from being processed
-  isAIResponding = false;
-  
-  console.log('AI transcription stopped due to interruption');
-}
-
 // Find the current AI message
 function findCurrentAIMessage() {
   if (!transcriptContainer) return null;

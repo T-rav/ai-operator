@@ -351,10 +351,7 @@ function sendInterruptionSignal() {
     // Stop any current audio playback
     stopAllAIAudio();
     
-    // Stop the transcription from continuing
-    stopAITranscription();
-    
-    // Reset AI response state
+    // Set AI response state to false to stop displaying
     isAIResponding = false;
     
     // Add system message indicating interruption
