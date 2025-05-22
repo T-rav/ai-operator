@@ -2,6 +2,8 @@
 
 This project implements a low-latency, real-time voice conversation system with a web client. It combines specialized services to create a responsive AI assistant that can understand speech, respond intelligently, and be interrupted naturally during conversation.
 
+See it in action: https://www.youtube.com/watch?v=iPqDASo2gsQ
+
 ## Key Features
 
 - **Real-time voice conversations** with GPT-4o
