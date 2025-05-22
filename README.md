@@ -21,6 +21,24 @@ See it in action: https://www.youtube.com/watch?v=iPqDASo2gsQ
 - **Interruption**: Supports natural conversation flow with immediate response to interruptions
 - **Customizable**: Each component can be swapped with alternatives
 
+## Future Enhancements
+
+- **Multimodal Interactions**: Add eyes/vision capability to enable:
+  - Visual understanding and processing
+  - Contextual responses based on both audio and visual inputs
+- **Tool Use**: Enable the AI to use external tools and APIs to:
+  - Execute actions on behalf of the user
+  - Access and manipulate data from various sources
+  - Perform complex tasks through tool orchestration
+- **Memory**: Implement persistent memory capabilities to:
+  - Remember past conversations and user preferences
+  - Store and retrieve relevant information across sessions
+  - Build a personalized user model for more tailored interactions
+- **User Feedback**: Create mechanisms to collect and utilize feedback on:
+  - Response quality and relevance
+  - Conversation experience and flow
+  - System performance for continuous improvement
+
 ## Getting Started
 
 ### Setup
