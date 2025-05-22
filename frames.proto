@@ -35,10 +35,20 @@ message TranscriptionFrame {
   string timestamp = 5;
 }
 
+message BotInterruptionFrame {
+  uint64 id = 1;
+}
+
+message EndFrame {
+  uint64 id = 1;
+}
+
 message Frame {
   oneof frame {
     TextFrame text = 1;
     AudioRawFrame audio = 2;
     TranscriptionFrame transcription = 3;
+    BotInterruptionFrame botInterruption = 4;
+    EndFrame end = 5;
   }
 }

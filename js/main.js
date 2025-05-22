@@ -89,6 +89,9 @@ function stopAudio(closeWebsocket) {
     
     // Reset AI response state
     AI_STATE.isAIResponding = false;
+    
+    // Reset interruption state
+    AI_STATE.isBeingInterrupted = false;
   }
   
   startBtn.disabled = false;

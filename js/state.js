@@ -8,7 +8,10 @@ const state = {
   silenceTimeout: null,
   
   // AI response state
-  isAIResponding: false
+  isAIResponding: false,
+  
+  // Interruption state
+  isBeingInterrupted: false
 };
 
 // Export the state object

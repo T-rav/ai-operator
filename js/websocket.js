@@ -40,6 +40,18 @@ function handleWebSocketMessage(event) {
       if (parsedFrame?.audio) {
         AI_AUDIO.enqueueAudioFromProto(arrayBuffer);
       }
+      
+      // Handle bot interruption frame
+      if (parsedFrame?.botInterruption) {
+        console.log('Bot interruption received, stopping AI audio');
+        handleBotInterruption();
+      }
+      
+      // Handle end frame
+      if (parsedFrame?.end) {
+        console.log('End frame received');
+        AI_MAIN.stopAudio(true);
+      }
     } catch (error) {
       console.error('Error decoding message:', error);
     }
@@ -150,29 +162,46 @@ function sendInterruptionSignal() {
   console.log('Sending interruption signal to stop AI response');
   
   try {
+    // Set interruption flag to prevent new audio chunks from being played
+    AI_STATE.isBeingInterrupted = true;
+    
+    // Send an interruption frame to the server
     const interruptFrame = AI_CONFIG.Frame.create({
-      text: {
-        id: 2,
-        name: "interruption",
-        text: "interrupt"
+      botInterruption: {
+        id: Date.now()
       }
     });
     
     // Encode and send the interruption signal
-    const encodedInterrupt = AI_CONFIG.Frame.encode(interruptFrame).finish();
+    const encodedInterrupt = new Uint8Array(AI_CONFIG.Frame.encode(interruptFrame).finish());
     ws.send(encodedInterrupt);
     
-    // Stop all currently playing AI audio
+    // Stop all currently playing AI audio immediately
     AI_AUDIO.stopAllAIAudio();
     
     // Reset AI response state
     AI_STATE.isAIResponding = false;
     
     // Add system message indicating interruption
-    AI_TRANSCRIPT.addMessageToTranscript('User interrupted', 'system');
+    AI_TRANSCRIPT.addMessageToTranscript('User interrupted AI', 'system');
   } catch (error) {
     console.error('Error sending interruption signal:', error);
   }
+}
+
+// Handle bot interruption
+function handleBotInterruption() {
+  // Set interruption flag to prevent new audio chunks from being played
+  AI_STATE.isBeingInterrupted = true;
+  
+  // Stop all currently playing AI audio
+  AI_AUDIO.stopAllAIAudio();
+  
+  // Reset AI response state
+  AI_STATE.isAIResponding = false;
+  
+  // Add system message indicating interruption
+  AI_TRANSCRIPT.addMessageToTranscript('AI was interrupted', 'system');
 }
 
 // Close WebSocket connection
@@ -188,5 +217,6 @@ window.AI_WEBSOCKET = {
   initWebSocket,
   closeWebSocket,
   sendInterruptionSignal,
+  handleBotInterruption,
   get ws() { return ws; }
 }; 

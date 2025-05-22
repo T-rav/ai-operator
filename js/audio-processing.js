@@ -63,6 +63,12 @@ function enqueueAudioFromProto(arrayBuffer) {
     const audioArray = new Uint8Array(audioVector);
   
     audioContext.decodeAudioData(audioArray.buffer, function(buffer) {
+      // If this is an ongoing interruption, don't play new audio
+      if (AI_STATE.isBeingInterrupted) {
+        console.log('Interruption in progress, skipping new audio chunk');
+        return;
+      }
+      
       const source = new AudioBufferSourceNode(audioContext);
       source.buffer = buffer;
       
@@ -72,6 +78,7 @@ function enqueueAudioFromProto(arrayBuffer) {
       
       // Add to active sources for potential stopping
       activeAudioSources.push(source);
+      console.log('Added audio source, total sources:', activeAudioSources.length);
       
       // Clean up when finished
       source.onended = function() {
@@ -79,17 +86,26 @@ function enqueueAudioFromProto(arrayBuffer) {
         const index = activeAudioSources.indexOf(source);
         if (index > -1) {
           activeAudioSources.splice(index, 1);
+          console.log('Audio source finished naturally, remaining:', activeAudioSources.length);
         }
       };
       
-      source.start(playTime);
-      playTime = playTime + buffer.duration;
+      // Start the source at the scheduled time
+      try {
+        source.start(playTime);
+        playTime = playTime + buffer.duration;
+      } catch (e) {
+        console.error('Error starting audio source:', e);
+      }
   
       // Add AI message only when we first start receiving audio
       if (!AI_STATE.isAIResponding) {
         AI_STATE.isAIResponding = true;
+        AI_STATE.isBeingInterrupted = false;
         AI_TRANSCRIPT.addMessageToTranscript('AI response...', 'ai');
       }
+    }).catch(error => {
+      console.error('Error decoding audio data:', error);
     });
     
     return true;
@@ -101,12 +117,19 @@ function enqueueAudioFromProto(arrayBuffer) {
 
 // Stop all currently playing AI audio
 function stopAllAIAudio() {
+  console.log('Stopping all AI audio, active sources:', activeAudioSources.length);
+  
+  // Set interruption flag to prevent new audio from being played
+  AI_STATE.isBeingInterrupted = true;
+  
   // Stop all currently playing audio sources
   for (let source of activeAudioSources) {
     try {
-      source.stop();
+      source.stop(0); // Stop immediately
+      source.disconnect(); // Disconnect from audio graph
     } catch (e) {
       // Ignore errors from sources that might have already stopped
+      console.warn('Error stopping audio source:', e);
     }
   }
   
@@ -115,6 +138,12 @@ function stopAllAIAudio() {
   
   // Reset play time to stop scheduling new audio
   playTime = audioContext.currentTime;
+  
+  // If AI was responding, update state
+  if (AI_STATE.isAIResponding) {
+    AI_STATE.isAIResponding = false;
+  }
+  
   console.log('AI audio playback interrupted');
 }
 
